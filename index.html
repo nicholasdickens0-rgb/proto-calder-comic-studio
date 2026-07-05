@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Proto Calder Comic Studio</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">PC</span>
+          <div>
+            <h1>Proto Calder Comic Studio</h1>
+            <p>Lettering, protected zones, and page export for Calder's Remnants.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="loadSampleBtn" type="button">Load Page 7 Clean</button>
+          <label class="file-button">
+            Import Image
+            <input id="imageInput" type="file" accept="image/*">
+          </label>
+          <label class="file-button">
+            Load Project
+            <input id="projectInput" type="file" accept="application/json,.json">
+          </label>
+          <button id="saveProjectBtn" type="button">Save Project</button>
+          <button id="exportBtn" type="button" class="primary">Export PNG</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="left-panel">
+          <section>
+            <h2>Tools</h2>
+            <div class="tool-grid">
+              <button class="tool active" data-tool="select" type="button">Select</button>
+              <button class="tool" data-tool="balloon" type="button">Balloon</button>
+              <button class="tool" data-tool="safe" type="button">Safe Zone</button>
+              <button class="tool" data-tool="panel" type="button">Panel Guide</button>
+            </div>
+          </section>
+
+          <section>
+            <h2>View</h2>
+            <label class="field">
+              Zoom
+              <input id="zoomRange" type="range" min="25" max="160" value="75">
+            </label>
+            <div class="toggles">
+              <label><input id="showSafeToggle" type="checkbox" checked> Safe zones</label>
+              <label><input id="showPanelToggle" type="checkbox" checked> Panel guides</label>
+              <label><input id="showWarningsToggle" type="checkbox" checked> Warnings</label>
+            </div>
+          </section>
+
+          <section>
+            <h2>Quick Add</h2>
+            <button id="addBalloonBtn" type="button">Add Balloon</button>
+            <button id="addSafeBtn" type="button">Add Protected Zone</button>
+            <button id="addPanelBtn" type="button">Add Panel Guide</button>
+            <button id="deleteBtn" type="button" class="danger">Delete Selected</button>
+          </section>
+
+          <section>
+            <h2>Checks</h2>
+            <div id="checkList" class="check-list"></div>
+          </section>
+        </aside>
+
+        <section class="stage-wrap">
+          <div class="stage-toolbar">
+            <span id="pageInfo">No page loaded</span>
+            <span id="statusText">Ready</span>
+          </div>
+          <div id="stageScroller" class="stage-scroller">
+            <canvas id="pageCanvas" width="900" height="1300"></canvas>
+          </div>
+        </section>
+
+        <aside class="right-panel">
+          <section>
+            <h2>Selected</h2>
+            <div id="emptyInspector" class="empty-state">Select a balloon, safe zone, or panel guide.</div>
+            <div id="inspector" class="inspector hidden">
+              <label class="field text-only" data-for="balloon">
+                Text
+                <textarea id="textInput" rows="5"></textarea>
+              </label>
+
+              <div class="field-row">
+                <label class="field">
+                  X
+                  <input id="xInput" type="number" step="1">
+                </label>
+                <label class="field">
+                  Y
+                  <input id="yInput" type="number" step="1">
+                </label>
+              </div>
+
+              <div class="field-row">
+                <label class="field">
+                  W
+                  <input id="wInput" type="number" step="1">
+                </label>
+                <label class="field">
+                  H
+                  <input id="hInput" type="number" step="1">
+                </label>
+              </div>
+
+              <div class="field-row text-only" data-for="balloon">
+                <label class="field">
+                  Font
+                  <input id="fontSizeInput" type="number" min="10" max="80" step="1">
+                </label>
+                <label class="field">
+                  Padding
+                  <input id="paddingInput" type="number" min="4" max="80" step="1">
+                </label>
+              </div>
+
+              <div class="field-row text-only" data-for="balloon">
+                <label class="field">
+                  Radius
+                  <input id="radiusInput" type="number" min="0" max="120" step="1">
+                </label>
+                <label class="field">
+                  Stroke
+                  <input id="strokeInput" type="number" min="1" max="12" step="1">
+                </label>
+              </div>
+
+              <label class="field text-only" data-for="safe">
+                Protected zone label
+                <input id="labelInput" type="text">
+              </label>
+            </div>
+          </section>
+
+          <section>
+            <h2>Page Notes</h2>
+            <textarea id="notesInput" rows="8" placeholder="Page purpose, lettering notes, dialogue choices..."></textarea>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+

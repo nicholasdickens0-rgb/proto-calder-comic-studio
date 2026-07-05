@@ -1,0 +1,859 @@
+const canvas = document.getElementById("pageCanvas");
+const ctx = canvas.getContext("2d");
+
+const ui = {
+  imageInput: document.getElementById("imageInput"),
+  projectInput: document.getElementById("projectInput"),
+  loadSampleBtn: document.getElementById("loadSampleBtn"),
+  saveProjectBtn: document.getElementById("saveProjectBtn"),
+  exportBtn: document.getElementById("exportBtn"),
+  addBalloonBtn: document.getElementById("addBalloonBtn"),
+  addSafeBtn: document.getElementById("addSafeBtn"),
+  addPanelBtn: document.getElementById("addPanelBtn"),
+  deleteBtn: document.getElementById("deleteBtn"),
+  zoomRange: document.getElementById("zoomRange"),
+  showSafeToggle: document.getElementById("showSafeToggle"),
+  showPanelToggle: document.getElementById("showPanelToggle"),
+  showWarningsToggle: document.getElementById("showWarningsToggle"),
+  tools: Array.from(document.querySelectorAll(".tool")),
+  pageInfo: document.getElementById("pageInfo"),
+  statusText: document.getElementById("statusText"),
+  emptyInspector: document.getElementById("emptyInspector"),
+  inspector: document.getElementById("inspector"),
+  textInput: document.getElementById("textInput"),
+  labelInput: document.getElementById("labelInput"),
+  xInput: document.getElementById("xInput"),
+  yInput: document.getElementById("yInput"),
+  wInput: document.getElementById("wInput"),
+  hInput: document.getElementById("hInput"),
+  fontSizeInput: document.getElementById("fontSizeInput"),
+  paddingInput: document.getElementById("paddingInput"),
+  radiusInput: document.getElementById("radiusInput"),
+  strokeInput: document.getElementById("strokeInput"),
+  notesInput: document.getElementById("notesInput"),
+  checkList: document.getElementById("checkList")
+};
+
+const state = {
+  title: "Untitled page",
+  imageName: "",
+  imageDataUrl: "",
+  image: null,
+  zoom: 0.75,
+  tool: "select",
+  selected: null,
+  drag: null,
+  notes: "",
+  balloons: [],
+  safeZones: [],
+  panels: [],
+  options: {
+    showSafe: true,
+    showPanels: true,
+    showWarnings: true
+  }
+};
+
+const sampleCandidates = [
+  "../outputs/Calder_Remnants_Page_007_full_color_v1_lettering_first.png",
+  "/outputs/Calder_Remnants_Page_007_full_color_v1_lettering_first.png",
+  "./sample-pages/Calder_Remnants_Page_007_full_color_v1_lettering_first.png"
+];
+
+function id(prefix) {
+  return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function setStatus(text) {
+  ui.statusText.textContent = text;
+}
+
+function pageRect() {
+  if (state.image) return { w: state.image.naturalWidth, h: state.image.naturalHeight };
+  return { w: 900, h: 1300 };
+}
+
+function updateCanvasSize() {
+  const rect = pageRect();
+  canvas.width = Math.round(rect.w * state.zoom);
+  canvas.height = Math.round(rect.h * state.zoom);
+  ui.pageInfo.textContent = state.image
+    ? `${state.title} - ${rect.w} x ${rect.h}`
+    : "No page loaded";
+}
+
+function toScreen(v) {
+  return v * state.zoom;
+}
+
+function fromScreen(v) {
+  return v / state.zoom;
+}
+
+function pointerToPage(event) {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    x: fromScreen(event.clientX - bounds.left),
+    y: fromScreen(event.clientY - bounds.top)
+  };
+}
+
+function normalizeRect(rect) {
+  if (rect.w < 0) {
+    rect.x += rect.w;
+    rect.w = Math.abs(rect.w);
+  }
+  if (rect.h < 0) {
+    rect.y += rect.h;
+    rect.h = Math.abs(rect.h);
+  }
+  return rect;
+}
+
+function roundedRectPath(context, x, y, w, h, radius) {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + w - r, y);
+  context.quadraticCurveTo(x + w, y, x + w, y + r);
+  context.lineTo(x + w, y + h - r);
+  context.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  context.lineTo(x + r, y + h);
+  context.quadraticCurveTo(x, y + h, x, y + h - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
+
+function wrapText(context, text, maxWidth) {
+  const lines = [];
+  for (const rawLine of text.split("\n")) {
+    const words = rawLine.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lines.push("");
+      continue;
+    }
+    let current = words[0];
+    for (const word of words.slice(1)) {
+      const trial = `${current} ${word}`;
+      if (context.measureText(trial).width <= maxWidth) {
+        current = trial;
+      } else {
+        lines.push(current);
+        current = word;
+      }
+    }
+    lines.push(current);
+  }
+  return lines;
+}
+
+function fitBalloonText(context, balloon) {
+  let size = balloon.fontSize;
+  let lines = [];
+  const maxW = Math.max(20, balloon.w - balloon.padding * 2);
+  const maxH = Math.max(20, balloon.h - balloon.padding * 2);
+
+  while (size >= 12) {
+    context.font = `700 ${size}px "Comic Sans MS", "Segoe UI", sans-serif`;
+    lines = wrapText(context, balloon.text, maxW);
+    const lineHeight = size * 1.22;
+    if (lines.length * lineHeight <= maxH) {
+      return { size, lines, lineHeight };
+    }
+    size -= 1;
+  }
+
+  context.font = `700 12px "Comic Sans MS", "Segoe UI", sans-serif`;
+  return { size: 12, lines: wrapText(context, balloon.text, maxW), lineHeight: 14.5 };
+}
+
+function drawBalloon(context, balloon, scale = 1, selected = false, exportMode = false) {
+  const x = balloon.x * scale;
+  const y = balloon.y * scale;
+  const w = balloon.w * scale;
+  const h = balloon.h * scale;
+  const tailX = balloon.tailX * scale;
+  const tailY = balloon.tailY * scale;
+  const stroke = balloon.stroke * scale;
+  const radius = balloon.radius * scale;
+
+  context.save();
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.fillStyle = balloon.fill;
+  context.strokeStyle = balloon.strokeColor;
+  context.lineWidth = Math.max(1.5, stroke);
+
+  if (balloon.hasTail) {
+    const baseX = Math.max(x + 24 * scale, Math.min(x + w - 24 * scale, tailX));
+    const tailBaseY = tailY < y + h / 2 ? y : y + h;
+    context.beginPath();
+    context.moveTo(baseX - 10 * scale, tailBaseY);
+    context.lineTo(tailX, tailY);
+    context.lineTo(baseX + 10 * scale, tailBaseY);
+    context.closePath();
+    context.fill();
+    context.stroke();
+  }
+
+  roundedRectPath(context, x, y, w, h, radius);
+  context.fill();
+  context.stroke();
+
+  const working = {
+    ...balloon,
+    x,
+    y,
+    w,
+    h,
+    padding: balloon.padding * scale,
+    fontSize: balloon.fontSize * scale
+  };
+  const fit = fitBalloonText(context, working);
+  context.font = `700 ${fit.size}px "Comic Sans MS", "Segoe UI", sans-serif`;
+  context.fillStyle = balloon.textColor;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const totalH = fit.lines.length * fit.lineHeight;
+  let lineY = y + h / 2 - totalH / 2 + fit.lineHeight / 2;
+  for (const line of fit.lines) {
+    context.fillText(line, x + w / 2, lineY);
+    lineY += fit.lineHeight;
+  }
+
+  if (selected && !exportMode) {
+    drawSelection(context, balloon, scale, "#2f6f67");
+    context.fillStyle = "#2f6f67";
+    context.beginPath();
+    context.arc(tailX, tailY, 6, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.restore();
+}
+
+function drawSelection(context, rect, scale, color) {
+  const x = rect.x * scale;
+  const y = rect.y * scale;
+  const w = rect.w * scale;
+  const h = rect.h * scale;
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = 2;
+  context.setLineDash([6, 4]);
+  context.strokeRect(x, y, w, h);
+  context.setLineDash([]);
+  const handles = getHandles(rect);
+  context.fillStyle = color;
+  for (const handle of handles) {
+    context.fillRect(handle.x * scale - 5, handle.y * scale - 5, 10, 10);
+  }
+  context.restore();
+}
+
+function drawRectObject(context, item, scale, kind, selected = false) {
+  const x = item.x * scale;
+  const y = item.y * scale;
+  const w = item.w * scale;
+  const h = item.h * scale;
+  context.save();
+  if (kind === "safe") {
+    context.fillStyle = "rgba(255, 162, 62, 0.24)";
+    context.strokeStyle = "rgba(177, 100, 18, 0.95)";
+  } else {
+    context.fillStyle = "rgba(39, 114, 171, 0.16)";
+    context.strokeStyle = "rgba(39, 114, 171, 0.9)";
+  }
+  context.lineWidth = 2;
+  context.fillRect(x, y, w, h);
+  context.strokeRect(x, y, w, h);
+  context.fillStyle = kind === "safe" ? "#8a5417" : "#1f6186";
+  context.font = `700 ${Math.max(12, 13 * scale)}px "Segoe UI", sans-serif`;
+  context.fillText(item.label || (kind === "safe" ? "Protected" : "Panel"), x + 8, y + 18);
+  if (selected) drawSelection(context, item, scale, kind === "safe" ? "#b16412" : "#2772ab");
+  context.restore();
+}
+
+function render(exportMode = false, targetCanvas = canvas) {
+  const context = targetCanvas.getContext("2d");
+  const scale = exportMode ? 1 : state.zoom;
+  const rect = pageRect();
+
+  context.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, rect.w * scale, rect.h * scale);
+
+  if (state.image) {
+    context.drawImage(state.image, 0, 0, rect.w * scale, rect.h * scale);
+  } else {
+    context.fillStyle = "#f7f4ec";
+    context.fillRect(0, 0, rect.w * scale, rect.h * scale);
+    context.fillStyle = "#7a7d76";
+    context.font = `${22 * scale}px "Segoe UI", sans-serif`;
+    context.textAlign = "center";
+    context.fillText("Import a clean page image to begin", (rect.w * scale) / 2, (rect.h * scale) / 2);
+  }
+
+  if (!exportMode && state.options.showPanels) {
+    for (const panel of state.panels) {
+      drawRectObject(context, panel, scale, "panel", isSelected("panel", panel.id));
+    }
+  }
+
+  if (!exportMode && state.options.showSafe) {
+    for (const safe of state.safeZones) {
+      drawRectObject(context, safe, scale, "safe", isSelected("safe", safe.id));
+    }
+  }
+
+  for (const balloon of state.balloons) {
+    drawBalloon(context, balloon, scale, isSelected("balloon", balloon.id), exportMode);
+  }
+
+  if (!exportMode && state.options.showWarnings) {
+    drawWarnings(context, scale);
+  }
+}
+
+function isSelected(type, objectId) {
+  return state.selected && state.selected.type === type && state.selected.id === objectId;
+}
+
+function selectedObject() {
+  if (!state.selected) return null;
+  const list = getList(state.selected.type);
+  return list.find((item) => item.id === state.selected.id) || null;
+}
+
+function getList(type) {
+  if (type === "balloon") return state.balloons;
+  if (type === "safe") return state.safeZones;
+  return state.panels;
+}
+
+function getHandles(rect) {
+  return [
+    { name: "nw", x: rect.x, y: rect.y },
+    { name: "ne", x: rect.x + rect.w, y: rect.y },
+    { name: "sw", x: rect.x, y: rect.y + rect.h },
+    { name: "se", x: rect.x + rect.w, y: rect.y + rect.h }
+  ];
+}
+
+function hitHandle(rect, point) {
+  for (const handle of getHandles(rect)) {
+    if (Math.abs(point.x - handle.x) <= 10 && Math.abs(point.y - handle.y) <= 10) {
+      return handle.name;
+    }
+  }
+  return null;
+}
+
+function hitTail(balloon, point) {
+  return Math.hypot(point.x - balloon.tailX, point.y - balloon.tailY) <= 12;
+}
+
+function contains(rect, point) {
+  return point.x >= rect.x && point.x <= rect.x + rect.w && point.y >= rect.y && point.y <= rect.y + rect.h;
+}
+
+function hitTest(point) {
+  for (let i = state.balloons.length - 1; i >= 0; i -= 1) {
+    const balloon = state.balloons[i];
+    if (hitTail(balloon, point)) return { type: "balloon", id: balloon.id, part: "tail" };
+    const handle = hitHandle(balloon, point);
+    if (handle) return { type: "balloon", id: balloon.id, part: handle };
+    if (contains(balloon, point)) return { type: "balloon", id: balloon.id, part: "move" };
+  }
+  for (let i = state.safeZones.length - 1; i >= 0; i -= 1) {
+    const safe = state.safeZones[i];
+    const handle = hitHandle(safe, point);
+    if (handle) return { type: "safe", id: safe.id, part: handle };
+    if (contains(safe, point)) return { type: "safe", id: safe.id, part: "move" };
+  }
+  for (let i = state.panels.length - 1; i >= 0; i -= 1) {
+    const panel = state.panels[i];
+    const handle = hitHandle(panel, point);
+    if (handle) return { type: "panel", id: panel.id, part: handle };
+    if (contains(panel, point)) return { type: "panel", id: panel.id, part: "move" };
+  }
+  return null;
+}
+
+function addBalloon() {
+  const rect = pageRect();
+  const balloon = {
+    id: id("balloon"),
+    x: Math.round(rect.w * 0.52),
+    y: Math.round(rect.h * 0.08),
+    w: 270,
+    h: 92,
+    text: "New dialogue.",
+    fontSize: 24,
+    padding: 18,
+    radius: 28,
+    stroke: 3,
+    fill: "#fffdf4",
+    strokeColor: "#171717",
+    textColor: "#171717",
+    hasTail: true,
+    tailX: Math.round(rect.w * 0.58),
+    tailY: Math.round(rect.h * 0.22)
+  };
+  state.balloons.push(balloon);
+  select("balloon", balloon.id);
+  render();
+  updateChecks();
+}
+
+function addSafeZone() {
+  const rect = pageRect();
+  const safe = {
+    id: id("safe"),
+    label: "Face / hand / baby",
+    x: Math.round(rect.w * 0.18),
+    y: Math.round(rect.h * 0.2),
+    w: 190,
+    h: 150
+  };
+  state.safeZones.push(safe);
+  select("safe", safe.id);
+  render();
+  updateChecks();
+}
+
+function addPanelGuide() {
+  const rect = pageRect();
+  const panel = {
+    id: id("panel"),
+    label: "Panel guide",
+    x: 12,
+    y: Math.round(rect.h * 0.08),
+    w: rect.w - 24,
+    h: Math.round(rect.h * 0.18)
+  };
+  state.panels.push(panel);
+  select("panel", panel.id);
+  render();
+}
+
+function select(type, objectId) {
+  state.selected = type && objectId ? { type, id: objectId } : null;
+  syncInspector();
+}
+
+function syncInspector() {
+  const obj = selectedObject();
+  ui.emptyInspector.classList.toggle("hidden", Boolean(obj));
+  ui.inspector.classList.toggle("hidden", !obj);
+  if (!obj) return;
+
+  ui.inspector.querySelectorAll("[data-for]").forEach((el) => {
+    el.classList.toggle("hidden", el.dataset.for !== state.selected.type);
+  });
+
+  ui.xInput.value = Math.round(obj.x);
+  ui.yInput.value = Math.round(obj.y);
+  ui.wInput.value = Math.round(obj.w);
+  ui.hInput.value = Math.round(obj.h);
+
+  if (state.selected.type === "balloon") {
+    ui.textInput.value = obj.text;
+    ui.fontSizeInput.value = obj.fontSize;
+    ui.paddingInput.value = obj.padding;
+    ui.radiusInput.value = obj.radius;
+    ui.strokeInput.value = obj.stroke;
+  }
+
+  if (state.selected.type === "safe") {
+    ui.labelInput.value = obj.label || "";
+  }
+}
+
+function applyInspectorChange() {
+  const obj = selectedObject();
+  if (!obj) return;
+  obj.x = Number(ui.xInput.value) || 0;
+  obj.y = Number(ui.yInput.value) || 0;
+  obj.w = Math.max(12, Number(ui.wInput.value) || 12);
+  obj.h = Math.max(12, Number(ui.hInput.value) || 12);
+
+  if (state.selected.type === "balloon") {
+    obj.text = ui.textInput.value;
+    obj.fontSize = Math.max(10, Number(ui.fontSizeInput.value) || 24);
+    obj.padding = Math.max(4, Number(ui.paddingInput.value) || 18);
+    obj.radius = Math.max(0, Number(ui.radiusInput.value) || 28);
+    obj.stroke = Math.max(1, Number(ui.strokeInput.value) || 3);
+  }
+
+  if (state.selected.type === "safe") {
+    obj.label = ui.labelInput.value;
+  }
+
+  render();
+  updateChecks();
+}
+
+function deleteSelected() {
+  if (!state.selected) return;
+  const list = getList(state.selected.type);
+  const index = list.findIndex((item) => item.id === state.selected.id);
+  if (index >= 0) list.splice(index, 1);
+  select(null, null);
+  render();
+  updateChecks();
+}
+
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function overlapWarnings() {
+  const warnings = [];
+  for (const balloon of state.balloons) {
+    for (const safe of state.safeZones) {
+      if (rectsOverlap(balloon, safe)) {
+        warnings.push({ balloon, safe });
+      }
+    }
+  }
+  return warnings;
+}
+
+function drawWarnings(context, scale) {
+  const warnings = overlapWarnings();
+  context.save();
+  context.strokeStyle = "#c98122";
+  context.lineWidth = 3;
+  context.setLineDash([7, 5]);
+  for (const warning of warnings) {
+    const b = warning.balloon;
+    context.strokeRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale);
+  }
+  context.restore();
+}
+
+function updateChecks() {
+  const warnings = overlapWarnings();
+  ui.checkList.innerHTML = "";
+
+  const good = document.createElement("div");
+  good.className = `check-item ${warnings.length ? "warn" : ""}`;
+  good.innerHTML = warnings.length
+    ? `<strong>${warnings.length} overlap warning${warnings.length === 1 ? "" : "s"}</strong><span>Move balloons away from protected art zones.</span>`
+    : "<strong>No protected-zone overlaps</strong><span>Faces, hands, and key acting are clear.</span>";
+  ui.checkList.appendChild(good);
+
+  const density = document.createElement("div");
+  density.className = "check-item";
+  density.innerHTML = `<strong>${state.balloons.length} balloon${state.balloons.length === 1 ? "" : "s"}</strong><span>${state.safeZones.length} protected zone${state.safeZones.length === 1 ? "" : "s"}, ${state.panels.length} panel guide${state.panels.length === 1 ? "" : "s"}.</span>`;
+  ui.checkList.appendChild(density);
+}
+
+function resizeByHandle(obj, part, point) {
+  const min = 24;
+  if (part.includes("n")) {
+    const bottom = obj.y + obj.h;
+    obj.y = Math.min(point.y, bottom - min);
+    obj.h = bottom - obj.y;
+  }
+  if (part.includes("s")) {
+    obj.h = Math.max(min, point.y - obj.y);
+  }
+  if (part.includes("w")) {
+    const right = obj.x + obj.w;
+    obj.x = Math.min(point.x, right - min);
+    obj.w = right - obj.x;
+  }
+  if (part.includes("e")) {
+    obj.w = Math.max(min, point.x - obj.x);
+  }
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  const point = pointerToPage(event);
+  canvas.setPointerCapture(event.pointerId);
+
+  if (state.tool === "balloon") {
+    addBalloon();
+    const obj = selectedObject();
+    obj.x = point.x - obj.w / 2;
+    obj.y = point.y - obj.h / 2;
+    obj.tailX = point.x;
+    obj.tailY = point.y + obj.h;
+    render();
+    syncInspector();
+    return;
+  }
+
+  if (state.tool === "safe" || state.tool === "panel") {
+    const type = state.tool;
+    const newObj = {
+      id: id(type),
+      label: type === "safe" ? "Protected art" : "Panel guide",
+      x: point.x,
+      y: point.y,
+      w: 1,
+      h: 1
+    };
+    if (type === "safe") state.safeZones.push(newObj);
+    else state.panels.push(newObj);
+    select(type, newObj.id);
+    state.drag = { type, id: newObj.id, part: "create", start: point };
+    render();
+    return;
+  }
+
+  const hit = hitTest(point);
+  if (!hit) {
+    select(null, null);
+    render();
+    return;
+  }
+
+  select(hit.type, hit.id);
+  const obj = selectedObject();
+  state.drag = {
+    type: hit.type,
+    id: hit.id,
+    part: hit.part,
+    start: point,
+    original: { ...obj }
+  };
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!state.drag) return;
+  const point = pointerToPage(event);
+  const obj = selectedObject();
+  if (!obj) return;
+
+  if (state.drag.part === "tail" && state.drag.type === "balloon") {
+    obj.tailX = point.x;
+    obj.tailY = point.y;
+  } else if (state.drag.part === "move") {
+    obj.x = state.drag.original.x + point.x - state.drag.start.x;
+    obj.y = state.drag.original.y + point.y - state.drag.start.y;
+    if (state.drag.type === "balloon") {
+      obj.tailX = state.drag.original.tailX + point.x - state.drag.start.x;
+      obj.tailY = state.drag.original.tailY + point.y - state.drag.start.y;
+    }
+  } else if (state.drag.part === "create") {
+    obj.w = point.x - state.drag.start.x;
+    obj.h = point.y - state.drag.start.y;
+    normalizeRect(obj);
+  } else {
+    resizeByHandle(obj, state.drag.part, point);
+  }
+
+  syncInspector();
+  render();
+  updateChecks();
+});
+
+canvas.addEventListener("pointerup", (event) => {
+  canvas.releasePointerCapture(event.pointerId);
+  state.drag = null;
+  syncInspector();
+  updateChecks();
+});
+
+function setTool(tool) {
+  state.tool = tool;
+  ui.tools.forEach((button) => button.classList.toggle("active", button.dataset.tool === tool));
+  canvas.style.cursor = tool === "select" ? "default" : "crosshair";
+}
+
+function loadImageFromDataUrl(dataUrl, name) {
+  const img = new Image();
+  img.onload = () => {
+    state.image = img;
+    state.imageDataUrl = dataUrl;
+    state.imageName = name || "image";
+    state.title = name ? name.replace(/\.[^.]+$/, "") : "Comic page";
+    updateCanvasSize();
+    render();
+    setStatus("Image loaded");
+  };
+  img.src = dataUrl;
+}
+
+function loadImageFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => loadImageFromDataUrl(String(reader.result), file.name);
+  reader.readAsDataURL(file);
+}
+
+async function loadSample() {
+  if (location.protocol === "file:") {
+    setStatus("Import a clean page image when opening from a file.");
+    return;
+  }
+
+  try {
+    let response = null;
+    for (const candidate of sampleCandidates) {
+      response = await fetch(candidate);
+      if (response.ok) break;
+    }
+
+    if (!response || !response.ok) throw new Error("No sample image found");
+
+    const blob = await response.blob();
+    const reader = new FileReader();
+    reader.onload = () => {
+      loadImageFromDataUrl(String(reader.result), "Calder Page 7 clean");
+      state.notes = "Sample page loaded from outputs. Mark protected zones, add balloons, then export.";
+      ui.notesInput.value = state.notes;
+    };
+    reader.readAsDataURL(blob);
+  } catch (error) {
+    setStatus("Could not load sample. Import an image instead.");
+  }
+}
+
+function projectData() {
+  return {
+    app: "Proto Calder Comic Studio",
+    version: 1,
+    title: state.title,
+    imageName: state.imageName,
+    imageDataUrl: state.imageDataUrl,
+    notes: ui.notesInput.value,
+    balloons: state.balloons,
+    safeZones: state.safeZones,
+    panels: state.panels
+  };
+}
+
+function saveProject() {
+  const blob = new Blob([JSON.stringify(projectData(), null, 2)], { type: "application/json" });
+  downloadBlob(blob, `${safeFileName(state.title || "comic-page")}.pccs.json`);
+  setStatus("Project saved");
+}
+
+function loadProjectFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(String(reader.result));
+      state.title = data.title || "Comic page";
+      state.imageName = data.imageName || "";
+      state.notes = data.notes || "";
+      ui.notesInput.value = state.notes;
+      state.balloons = data.balloons || [];
+      state.safeZones = data.safeZones || [];
+      state.panels = data.panels || [];
+      if (data.imageDataUrl) {
+        loadImageFromDataUrl(data.imageDataUrl, state.imageName || state.title);
+      } else {
+        updateCanvasSize();
+        render();
+      }
+      select(null, null);
+      updateChecks();
+      setStatus("Project loaded");
+    } catch (error) {
+      setStatus("Project file could not be read");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function safeFileName(name) {
+  return name.replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "") || "comic-page";
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportPng() {
+  const rect = pageRect();
+  const out = document.createElement("canvas");
+  out.width = rect.w;
+  out.height = rect.h;
+  render(true, out);
+  out.toBlob((blob) => {
+    if (!blob) {
+      setStatus("Export failed");
+      return;
+    }
+    downloadBlob(blob, `${safeFileName(state.title || "lettered-page")}_lettered.png`);
+    setStatus("PNG exported");
+  }, "image/png");
+}
+
+ui.tools.forEach((button) => button.addEventListener("click", () => setTool(button.dataset.tool)));
+ui.addBalloonBtn.addEventListener("click", addBalloon);
+ui.addSafeBtn.addEventListener("click", addSafeZone);
+ui.addPanelBtn.addEventListener("click", addPanelGuide);
+ui.deleteBtn.addEventListener("click", deleteSelected);
+ui.loadSampleBtn.addEventListener("click", loadSample);
+ui.saveProjectBtn.addEventListener("click", saveProject);
+ui.exportBtn.addEventListener("click", exportPng);
+ui.imageInput.addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  if (file) loadImageFile(file);
+  event.target.value = "";
+});
+ui.projectInput.addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  if (file) loadProjectFile(file);
+  event.target.value = "";
+});
+ui.zoomRange.addEventListener("input", () => {
+  state.zoom = Number(ui.zoomRange.value) / 100;
+  updateCanvasSize();
+  render();
+});
+ui.showSafeToggle.addEventListener("change", () => {
+  state.options.showSafe = ui.showSafeToggle.checked;
+  render();
+});
+ui.showPanelToggle.addEventListener("change", () => {
+  state.options.showPanels = ui.showPanelToggle.checked;
+  render();
+});
+ui.showWarningsToggle.addEventListener("change", () => {
+  state.options.showWarnings = ui.showWarningsToggle.checked;
+  render();
+});
+ui.notesInput.addEventListener("input", () => {
+  state.notes = ui.notesInput.value;
+});
+
+[
+  ui.textInput,
+  ui.labelInput,
+  ui.xInput,
+  ui.yInput,
+  ui.wInput,
+  ui.hInput,
+  ui.fontSizeInput,
+  ui.paddingInput,
+  ui.radiusInput,
+  ui.strokeInput
+].forEach((input) => input.addEventListener("input", applyInspectorChange));
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Delete" || event.key === "Backspace") {
+    const activeTag = document.activeElement && document.activeElement.tagName;
+    if (activeTag !== "INPUT" && activeTag !== "TEXTAREA") {
+      deleteSelected();
+    }
+  }
+});
+
+updateCanvasSize();
+render();
+updateChecks();
+setTool("select");
