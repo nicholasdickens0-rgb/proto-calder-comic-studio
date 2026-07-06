@@ -42,6 +42,8 @@ http://localhost:5177
 - Supports both `Panel | Type | Text | Placement` and `Panel | Lettering | Text` plan formats.
 - Detects horizontal panel guides from black page gutters, merges weak false seams, and can force-rebuild old guide sets.
 - Gives imported SFX stronger impact lettering with burst backing, glow, and heavier outlines.
+- Tidies Page 1 lettering with art-aware placement rules for faces, rope action, eye close-ups, and major battle silhouettes.
+- Uses curved connected speech tails and hybrid cinematic caption/SFX styling.
 - Watch Studio Assistant status while it works, with clear success and error messages.
 - Move and resize balloons/zones/guides.
 - Drag balloon tail points.
