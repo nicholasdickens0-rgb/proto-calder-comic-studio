@@ -39,6 +39,7 @@ http://localhost:5177
 - Use Studio Assistant to critique page flow, split dialogue, create tone-aware balloons, and auto-place selected balloons.
 - Paste a lettering-plan Markdown table and let Studio Assistant create captions, balloons, SFX, and inferred panel guides.
 - Import lettering plans from Markdown tables, rendered copied tables, tab-separated rows, or plain panel rows.
+- Supports both `Panel | Type | Text | Placement` and `Panel | Lettering | Text` plan formats.
 - Watch Studio Assistant status while it works, with clear success and error messages.
 - Move and resize balloons/zones/guides.
 - Drag balloon tail points.

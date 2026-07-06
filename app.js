@@ -1372,12 +1372,53 @@ function cleanPlanText(text) {
     .trim();
 }
 
+function cleanPlanLine(line) {
+  return (line || "")
+    .trim()
+    .replace(/^["\u201c\u201d]+/, "")
+    .replace(/["\u201c\u201d]+$/, "")
+    .trim();
+}
+
+function parseLetteringCell(lettering) {
+  const value = cleanPlanText(lettering);
+  let type = "";
+  if (/sfx/i.test(value)) type = "SFX";
+  else if (/caption/i.test(value)) type = "Caption";
+  else if (/dark\s+balloon/i.test(value)) type = "Dark balloon";
+  else if (/balloons/i.test(value)) type = "Balloons";
+  else if (/balloon/i.test(value)) type = "Balloon";
+  else type = value;
+
+  let placement = "";
+  if (value.includes(",")) {
+    placement = value.split(",").slice(1).join(",").trim();
+  } else {
+    placement = value
+      .replace(/dark\s+balloon|balloons?|caption|sfx|only/gi, "")
+      .replace(/^[,\s-]+|[,\s-]+$/g, "")
+      .trim();
+  }
+  return { type, placement };
+}
+
 function parsePlanCells(cells) {
-  if (cells.length < 4) return null;
+  if (cells.length < 3) return null;
   const panel = Number.parseInt(cells[0], 10);
-  const type = cells[1] || "";
-  const planText = cleanPlanText(cells[2] || "");
-  const placement = cells.slice(3).join(" ").trim();
+  let type = cells[1] || "";
+  let planText = "";
+  let placement = "";
+
+  if (cells.length === 3) {
+    const lettering = parseLetteringCell(cells[1] || "");
+    type = lettering.type;
+    placement = lettering.placement;
+    planText = cleanPlanText(cells[2] || "");
+  } else {
+    planText = cleanPlanText(cells[2] || "");
+    placement = cells.slice(3).join(" ").trim();
+  }
+
   if (!Number.isFinite(panel) || !planText || /^none$/i.test(type)) return null;
   return { panel, type, text: planText, placement };
 }
@@ -1398,11 +1439,22 @@ function splitRenderedPlanBody(type, body) {
 }
 
 function parseRenderedPlanLine(line) {
-  const match = line.match(/^(\d+)\s+(Dark\s+balloon|Balloons?|Balloon|Caption|SFX|None)\s+(.+)$/i);
+  const match = line.match(/^(\d+)\s+(.+)$/);
   if (!match) return null;
   const panel = Number.parseInt(match[1], 10);
-  const type = match[2];
-  const [planText, placement] = splitRenderedPlanBody(type, match[3]);
+  const body = match[2].trim();
+  const typeMatch = body.match(/^((?:Dark\s+balloon|Balloons?|Balloon|Caption|None)(?:,[^"\u201c]+)?|SFX\s+only|SFX(?:,[^"\u201c]+)?|Small\s+.+?\s+balloon)\s+(.+)$/i);
+  if (!typeMatch) return null;
+
+  const lettering = parseLetteringCell(typeMatch[1]);
+  const type = lettering.type;
+  let planText = "";
+  let placement = lettering.placement;
+  if (placement) {
+    planText = cleanPlanText(typeMatch[2]);
+  } else {
+    [planText, placement] = splitRenderedPlanBody(type, typeMatch[2]);
+  }
   if (!Number.isFinite(panel) || !cleanPlanText(planText) || /^none$/i.test(type)) return null;
   return { panel, type, text: cleanPlanText(planText), placement };
 }
@@ -1411,9 +1463,9 @@ function parseLetteringPlan(text) {
   const rows = [];
   const lines = (text || "").split(/\r?\n/);
   for (const line of lines) {
-    const trimmed = line.trim();
+    const trimmed = cleanPlanLine(line);
     if (!trimmed) continue;
-    if (/^\|?\s*-+/.test(trimmed) || /^panel\s+/i.test(trimmed) || /panel\s*\|\s*type/i.test(trimmed)) continue;
+    if (/^\|?\s*-+/.test(trimmed) || /^panel\s+/i.test(trimmed) || /panel\s*\|\s*(type|lettering)/i.test(trimmed)) continue;
 
     if (trimmed.includes("|")) {
       const cells = trimmed
@@ -1486,8 +1538,10 @@ function rectFromPlacementHint(panelRect, balloon, placement) {
   if (hint.includes("left")) x = panelRect.x + panelRect.w * 0.06;
   if (hint.includes("right")) x = panelRect.x + panelRect.w - balloon.w - panelRect.w * 0.06;
   if (hint.includes("center")) x = panelRect.x + panelRect.w * 0.5 - balloon.w / 2;
-  if (hint.includes("upper") || hint.includes("top") || hint.includes("sky")) y = panelRect.y + panelRect.h * 0.08;
+  const wantsLower = hint.includes("lower") || hint.includes("bottom") || hint.includes("low-");
+  if (hint.includes("upper") || hint.includes("top") || (hint.includes("sky") && !wantsLower)) y = panelRect.y + panelRect.h * 0.08;
   if (hint.includes("lower") || hint.includes("bottom")) y = panelRect.y + panelRect.h - balloon.h - panelRect.h * 0.08;
+  if (hint.includes("low-")) y = panelRect.y + panelRect.h - balloon.h - panelRect.h * 0.08;
   if (hint.includes("window")) y = panelRect.y + panelRect.h * 0.22;
   if (hint.includes("rope")) y = panelRect.y + panelRect.h * 0.35;
   if (hint.includes("eye")) y = panelRect.y + panelRect.h * 0.12;
@@ -1540,7 +1594,7 @@ function assistantApplyPlan() {
   if (!rows.length) {
     assistantCards([{
       title: "No Plan Rows Found",
-      body: "Paste rows with Panel, Type, Text, and Placement. Example: | 1 | Caption | \"The sea raged.\" | Upper-left sky |",
+      body: "Paste rows like: | 1 | Caption, upper-left sky | \"The sea raged.\" |",
       warn: true
     }]);
     return { message: "No plan rows found", warn: true };
