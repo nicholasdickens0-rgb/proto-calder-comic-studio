@@ -20,6 +20,8 @@ const ui = {
   applyPlanBtn: document.getElementById("applyPlanBtn"),
   assistantInput: document.getElementById("assistantInput"),
   assistantToneInput: document.getElementById("assistantToneInput"),
+  assistantStatus: document.getElementById("assistantStatus"),
+  assistantStatusText: document.getElementById("assistantStatusText"),
   assistantOutput: document.getElementById("assistantOutput"),
   zoomRange: document.getElementById("zoomRange"),
   showSafeToggle: document.getElementById("showSafeToggle"),
@@ -68,7 +70,8 @@ const state = {
   safeZones: [],
   panels: [],
   assistant: {
-    beats: []
+    beats: [],
+    busy: false
   },
   history: {
     undo: [],
@@ -234,6 +237,56 @@ function id(prefix) {
 
 function setStatus(text) {
   ui.statusText.textContent = text;
+}
+
+function assistantButtons() {
+  return [ui.critiqueBtn, ui.splitDialogueBtn, ui.createBalloonsBtn, ui.autoPlaceBtn, ui.applyPlanBtn];
+}
+
+function setAssistantState(message, mode = "idle") {
+  ui.assistantStatusText.textContent = message;
+  ui.assistantStatus.classList.toggle("busy", mode === "busy");
+  ui.assistantStatus.classList.toggle("error", mode === "error");
+}
+
+function setAssistantBusy(isBusy, message = "") {
+  state.assistant.busy = isBusy;
+  assistantButtons().forEach((button) => {
+    button.disabled = isBusy;
+  });
+  if (message) setAssistantState(message, isBusy ? "busy" : "idle");
+}
+
+function assistantWorkingCard(title, body) {
+  assistantCards([{ title, body }]);
+}
+
+function runAssistantAction(label, work, doneMessage) {
+  if (state.assistant.busy) return;
+  setAssistantBusy(true, `${label}...`);
+  assistantWorkingCard(label, "Working through the page data now.");
+  setStatus(`${label}...`);
+
+  window.setTimeout(() => {
+    try {
+      const result = work() || {};
+      const message = typeof result === "string"
+        ? result
+        : result.message || doneMessage || `${label} complete`;
+      setAssistantBusy(false);
+      setAssistantState(message, result.warn ? "error" : "idle");
+      setStatus(message);
+    } catch (error) {
+      setAssistantBusy(false);
+      setAssistantState("Assistant stopped. Check the pasted text and try again.", "error");
+      assistantCards([{
+        title: "Assistant Error",
+        body: error && error.message ? error.message : "Something interrupted the assistant action.",
+        warn: true
+      }]);
+      setStatus("Assistant error");
+    }
+  }, 40);
 }
 
 function snapshotData() {
@@ -1150,6 +1203,7 @@ function pageCritique() {
 
   assistantCards(cards);
   setStatus("Assistant critique ready");
+  return { message: "Critique ready" };
 }
 
 function splitDialogue(text) {
@@ -1189,13 +1243,16 @@ function assistantSplitDialogue() {
   state.assistant.beats = splitDialogue(source);
   if (!state.assistant.beats.length) {
     assistantCards([{ title: "No Dialogue", body: "Paste dialogue or select a balloon with text first.", warn: true }]);
-    return;
+    return { message: "No dialogue found", warn: true };
   }
   assistantCards(state.assistant.beats.map((beat, index) => ({
     title: `Beat ${index + 1}`,
     body: beat
   })));
   setStatus(`${state.assistant.beats.length} dialogue beat${state.assistant.beats.length === 1 ? "" : "s"} split`);
+  return {
+    message: `${state.assistant.beats.length} dialogue beat${state.assistant.beats.length === 1 ? "" : "s"} split`
+  };
 }
 
 function toneForText(text) {
@@ -1438,7 +1495,7 @@ function assistantApplyPlan() {
   const rows = parseLetteringPlan(ui.assistantInput.value);
   if (!rows.length) {
     assistantCards([{ title: "No Plan Rows Found", body: "Paste a lettering-plan Markdown table with Panel, Type, Text, and Placement columns.", warn: true }]);
-    return;
+    return { message: "No plan rows found", warn: true };
   }
 
   pushHistory();
@@ -1456,13 +1513,14 @@ function assistantApplyPlan() {
     { title: "Human Pass", body: "Now drag tails, protect key art, and run Critique for overlap and pacing checks." }
   ]);
   setStatus("Assistant applied lettering plan");
+  return { message: `${created.length} plan object${created.length === 1 ? "" : "s"} created` };
 }
 
 function assistantCreateBalloons() {
   const beats = state.assistant.beats.length ? state.assistant.beats : splitDialogue(ui.assistantInput.value);
   if (!beats.length) {
     assistantCards([{ title: "No Dialogue", body: "Paste dialogue, then split or create balloons.", warn: true }]);
-    return;
+    return { message: "No dialogue found", warn: true };
   }
 
   pushHistory();
@@ -1483,13 +1541,14 @@ function assistantCreateBalloons() {
     { title: "Review Placement", body: "Use protected-zone warnings and reading order to make final human choices." }
   ]);
   setStatus("Assistant created balloons");
+  return { message: `${created.length} balloon${created.length === 1 ? "" : "s"} created` };
 }
 
 function assistantAutoPlaceSelected() {
   const obj = selectedObject();
   if (!obj || state.selected.type !== "balloon") {
     assistantCards([{ title: "Select A Balloon", body: "Choose a balloon, then place it with the assistant.", warn: true }]);
-    return;
+    return { message: "Select a balloon first", warn: true };
   }
 
   pushHistory();
@@ -1501,6 +1560,7 @@ function assistantAutoPlaceSelected() {
   updateChecks();
   assistantCards([{ title: "Placed Selected Balloon", body: "The assistant moved it to the lowest-conflict area it found." }]);
   setStatus("Assistant placed selected balloon");
+  return { message: "Selected balloon placed" };
 }
 
 function resizeByHandle(obj, part, point) {
@@ -1798,11 +1858,11 @@ ui.addBalloonBtn.addEventListener("click", addBalloon);
 ui.addSafeBtn.addEventListener("click", addSafeZone);
 ui.addPanelBtn.addEventListener("click", addPanelGuide);
 ui.deleteBtn.addEventListener("click", deleteSelected);
-ui.critiqueBtn.addEventListener("click", pageCritique);
-ui.splitDialogueBtn.addEventListener("click", assistantSplitDialogue);
-ui.createBalloonsBtn.addEventListener("click", assistantCreateBalloons);
-ui.autoPlaceBtn.addEventListener("click", assistantAutoPlaceSelected);
-ui.applyPlanBtn.addEventListener("click", assistantApplyPlan);
+ui.critiqueBtn.addEventListener("click", () => runAssistantAction("Critiquing page", pageCritique, "Critique ready"));
+ui.splitDialogueBtn.addEventListener("click", () => runAssistantAction("Splitting dialogue", assistantSplitDialogue));
+ui.createBalloonsBtn.addEventListener("click", () => runAssistantAction("Creating balloons", assistantCreateBalloons));
+ui.autoPlaceBtn.addEventListener("click", () => runAssistantAction("Placing balloon", assistantAutoPlaceSelected));
+ui.applyPlanBtn.addEventListener("click", () => runAssistantAction("Applying lettering plan", assistantApplyPlan));
 ui.undoBtn.addEventListener("click", undo);
 ui.redoBtn.addEventListener("click", redo);
 ui.loadSampleBtn.addEventListener("click", loadSample);

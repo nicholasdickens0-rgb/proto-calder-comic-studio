@@ -315,6 +315,60 @@ textarea {
   margin-bottom: 0;
 }
 
+.assistant-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  margin-top: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffefa;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.assistant-status.busy {
+  color: var(--accent-strong);
+  border-color: rgba(47, 111, 103, 0.45);
+}
+
+.assistant-status.error {
+  color: var(--danger);
+  border-color: rgba(169, 68, 62, 0.5);
+}
+
+.assistant-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.assistant-status.busy .assistant-dot {
+  background: var(--accent);
+  animation: assistantPulse 0.9s ease-in-out infinite;
+}
+
+.assistant-status.error .assistant-dot {
+  background: var(--danger);
+}
+
+@keyframes assistantPulse {
+  0%,
+  100% {
+    transform: scale(0.75);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
 .assistant-output {
   display: grid;
   gap: 8px;
