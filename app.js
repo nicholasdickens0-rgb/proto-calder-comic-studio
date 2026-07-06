@@ -706,6 +706,7 @@ function drawSfxText(context, balloon, scale = 1, selected = false, exportMode =
   const y = balloon.y * scale;
   const w = balloon.w * scale;
   const h = balloon.h * scale;
+  const sfxFontSize = Math.max(balloon.fontSize * scale, Math.min(h * 0.78, w * 0.36));
   const working = {
     ...balloon,
     x,
@@ -713,7 +714,7 @@ function drawSfxText(context, balloon, scale = 1, selected = false, exportMode =
     w,
     h,
     padding: balloon.padding * scale,
-    fontSize: balloon.fontSize * scale
+    fontSize: sfxFontSize
   };
   const fit = fitBalloonText(context, working);
   const seed = seedFromId(balloon.id || balloon.text || "sfx");
@@ -1133,6 +1134,7 @@ function syncInspector() {
 function applyInspectorChange() {
   const obj = selectedObject();
   if (!obj) return;
+  if (state.selected.type === "panel") obj.generatedByAssistant = false;
   obj.x = Number(ui.xInput.value) || 0;
   obj.y = Number(ui.yInput.value) || 0;
   obj.w = Math.max(12, Number(ui.wInput.value) || 12);
@@ -1611,6 +1613,127 @@ function inferredPanelRect(panelNumber, panelCount) {
   };
 }
 
+function mergeRowGroups(groups, maxGap) {
+  if (!groups.length) return [];
+  const merged = [{ ...groups[0] }];
+  for (const group of groups.slice(1)) {
+    const last = merged[merged.length - 1];
+    if (group.start - last.end <= maxGap) {
+      last.end = group.end;
+      last.height = last.end - last.start + 1;
+    } else {
+      merged.push({ ...group });
+    }
+  }
+  return merged;
+}
+
+function detectedPanelRectsFromImage(panelCount) {
+  const rect = pageRect();
+  if (!state.image || panelCount <= 1) return [];
+
+  const maxPixels = 2500000;
+  const imagePixels = rect.w * rect.h;
+  const imageScale = Math.min(1, Math.sqrt(maxPixels / Math.max(1, imagePixels)));
+  const sampleW = Math.max(240, Math.round(rect.w * imageScale));
+  const sampleH = Math.max(240, Math.round(rect.h * imageScale));
+  const sample = document.createElement("canvas");
+  sample.width = sampleW;
+  sample.height = sampleH;
+  const sampleCtx = sample.getContext("2d", { willReadFrequently: true });
+  if (!sampleCtx) return [];
+
+  try {
+    sampleCtx.drawImage(state.image, 0, 0, sampleW, sampleH);
+  } catch {
+    return [];
+  }
+
+  let pixels;
+  try {
+    pixels = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
+  } catch {
+    return [];
+  }
+
+  const xStart = Math.max(1, Math.floor(sampleW * 0.008));
+  const xEnd = Math.min(sampleW - 1, Math.ceil(sampleW * 0.992));
+  const xStep = Math.max(1, Math.floor(sampleW / 360));
+  const groups = [];
+  let start = -1;
+  let end = -1;
+
+  for (let y = 0; y < sampleH; y += 1) {
+    let dark = 0;
+    let total = 0;
+    for (let x = xStart; x < xEnd; x += xStep) {
+      const offset = (y * sampleW + x) * 4;
+      const brightness = (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3;
+      if (brightness < 30) dark += 1;
+      total += 1;
+    }
+
+    const darkFraction = total ? dark / total : 0;
+    if (darkFraction >= 0.88) {
+      if (start < 0) start = y;
+      end = y;
+    } else if (start >= 0) {
+      groups.push({ start, end, height: end - start + 1 });
+      start = -1;
+      end = -1;
+    }
+  }
+  if (start >= 0) groups.push({ start, end, height: end - start + 1 });
+
+  const maxGap = Math.max(1, Math.round(sampleH * 0.0015));
+  const minGutterH = Math.max(2, Math.round(sampleH * 0.0025));
+  const edgePad = Math.max(4, Math.round(sampleH * 0.012));
+  let gutters = mergeRowGroups(groups, maxGap).filter((group) => (
+    group.height >= minGutterH ||
+    group.start <= edgePad ||
+    group.end >= sampleH - edgePad
+  ));
+
+  if (!gutters.length || gutters[0].start > edgePad) {
+    gutters.unshift({ start: 0, end: 0, height: 1 });
+  }
+  const lastGutter = gutters[gutters.length - 1];
+  if (!lastGutter || lastGutter.end < sampleH - edgePad) {
+    gutters.push({ start: sampleH - 1, end: sampleH - 1, height: 1 });
+  }
+
+  const minPanelH = Math.max(24, Math.round(sampleH * 0.055));
+  let rows = [];
+  for (let index = 0; index < gutters.length - 1; index += 1) {
+    const top = gutters[index].end + 1;
+    const bottom = gutters[index + 1].start - 1;
+    const height = bottom - top + 1;
+    if (height >= minPanelH) rows.push({ top, bottom, height });
+  }
+
+  if (rows.length > panelCount) {
+    rows = rows
+      .slice()
+      .sort((a, b) => b.height - a.height)
+      .slice(0, panelCount)
+      .sort((a, b) => a.top - b.top);
+  }
+  if (rows.length !== panelCount) return [];
+
+  const scaleY = rect.h / sampleH;
+  return rows.map((row) => {
+    const y = Math.round(row.top * scaleY);
+    const bottom = Math.round((row.bottom + 1) * scaleY);
+    return {
+      x: 0,
+      y,
+      w: rect.w,
+      h: Math.max(24, bottom - y),
+      detectedFrom: "image-gutters"
+    };
+  });
+}
+
 function looksLikeLegacyPanelGuides(panelCount) {
   if (state.panels.length !== panelCount || panelCount <= 1) return false;
   const rect = pageRect();
@@ -1630,22 +1753,36 @@ function looksLikeLegacyPanelGuides(panelCount) {
     });
 }
 
+function looksLikeGeneratedPanelGuides(panelCount) {
+  return (
+    state.panels.length === panelCount &&
+    state.panels.every((panel, index) => (
+      panel.generatedByAssistant &&
+      (panel.label || "") === `Panel ${index + 1}`
+    ))
+  );
+}
+
 function ensurePlanPanelGuides(panelCount) {
-  if (panelCount <= 1) return;
-  if (looksLikeLegacyPanelGuides(panelCount)) state.panels = [];
-  if (state.panels.length) return;
+  if (panelCount <= 1) return { method: "none", count: 0 };
+  if (looksLikeLegacyPanelGuides(panelCount) || looksLikeGeneratedPanelGuides(panelCount)) state.panels = [];
+  if (state.panels.length) return { method: "manual", count: state.panels.length };
+  const detectedRects = detectedPanelRectsFromImage(panelCount);
+  const method = detectedRects.length === panelCount ? "image-gutters" : "weighted-estimate";
   for (let panel = 1; panel <= panelCount; panel += 1) {
-    const rect = inferredPanelRect(panel, panelCount);
+    const rect = detectedRects[panel - 1] || inferredPanelRect(panel, panelCount);
     state.panels.push({
       id: id("panel"),
       label: `Panel ${panel}`,
       generatedByAssistant: true,
+      detectionMethod: rect.detectedFrom || method,
       x: rect.x + 6,
       y: rect.y + 6,
       w: rect.w - 12,
       h: rect.h - 12
     });
   }
+  return { method, count: panelCount };
 }
 
 function rectForPlanPanel(panelNumber, panelCount) {
@@ -1751,7 +1888,7 @@ function assistantApplyPlan() {
 
   pushHistory();
   const panelCount = Math.max(...rows.map((row) => row.panel));
-  ensurePlanPanelGuides(panelCount);
+  const panelGuideResult = ensurePlanPanelGuides(panelCount);
   const created = rows.map((row) => makePlanBalloon(row, panelCount));
   state.balloons.push(...created);
   const last = created[created.length - 1];
@@ -1760,7 +1897,7 @@ function assistantApplyPlan() {
   updateChecks();
   assistantCards([
     { title: "Plan Applied", body: `${created.length} editable lettering object${created.length === 1 ? "" : "s"} created from the plan.` },
-    { title: "Panel Guides", body: state.panels.length ? "Panel guides are active. Adjust them first if a band does not match the art exactly." : "Add panel guides for more accurate future placement." },
+    { title: "Panel Guides", body: panelGuideResult.method === "image-gutters" ? "Panel guides were detected from the black gutters in the page art." : state.panels.length ? "Panel guides are active. Adjust them first if a band does not match the art exactly." : "Add panel guides for more accurate future placement." },
     { title: "Human Pass", body: "Now drag tails, protect key art, and run Critique for overlap and pacing checks." }
   ]);
   setStatus("Assistant applied lettering plan");
@@ -1894,6 +2031,7 @@ canvas.addEventListener("pointermove", (event) => {
   const point = pointerToPage(event);
   const obj = selectedObject();
   if (!obj) return;
+  if (state.drag.type === "panel") obj.generatedByAssistant = false;
 
   if (state.drag.part === "tail" && state.drag.type === "balloon") {
     obj.tailX = point.x;
@@ -1989,7 +2127,7 @@ async function loadSample() {
 function projectData() {
   return {
     app: "Proto Calder Comic Studio",
-    version: 5,
+    version: 6,
     title: state.title,
     imageName: state.imageName,
     imageDataUrl: state.imageDataUrl,
