@@ -1367,9 +1367,44 @@ function placeBalloonSmart(balloon, index = 0, total = 1, ignoreId = balloon.id)
 function cleanPlanText(text) {
   return (text || "")
     .trim()
-    .replace(/^["“”]+|["“”]+$/g, "")
+    .replace(/^["\u201c\u201d]+|["\u201c\u201d]+$/g, "")
     .replace(/^None$/i, "")
     .trim();
+}
+
+function parsePlanCells(cells) {
+  if (cells.length < 4) return null;
+  const panel = Number.parseInt(cells[0], 10);
+  const type = cells[1] || "";
+  const planText = cleanPlanText(cells[2] || "");
+  const placement = cells.slice(3).join(" ").trim();
+  if (!Number.isFinite(panel) || !planText || /^none$/i.test(type)) return null;
+  return { panel, type, text: planText, placement };
+}
+
+function splitRenderedPlanBody(type, body) {
+  const trimmed = body.trim();
+  const quoted = trimmed.match(/^["\u201c]([^"\u201d]+)["\u201d]\s+(.+)$/);
+  if (quoted) return [quoted[1], quoted[2]];
+  if (/sfx/i.test(type)) {
+    const parts = trimmed.split(/\s+/);
+    return [parts[0] || "", parts.slice(1).join(" ")];
+  }
+  const placement = trimmed.match(/\s((?:upper|lower|right|left|center|over|near|tail|tails|no lettering).*)$/i);
+  if (placement) {
+    return [trimmed.slice(0, placement.index).trim(), placement[1].trim()];
+  }
+  return [trimmed, ""];
+}
+
+function parseRenderedPlanLine(line) {
+  const match = line.match(/^(\d+)\s+(Dark\s+balloon|Balloons?|Balloon|Caption|SFX|None)\s+(.+)$/i);
+  if (!match) return null;
+  const panel = Number.parseInt(match[1], 10);
+  const type = match[2];
+  const [planText, placement] = splitRenderedPlanBody(type, match[3]);
+  if (!Number.isFinite(panel) || !cleanPlanText(planText) || /^none$/i.test(type)) return null;
+  return { panel, type, text: cleanPlanText(planText), placement };
 }
 
 function parseLetteringPlan(text) {
@@ -1377,19 +1412,28 @@ function parseLetteringPlan(text) {
   const lines = (text || "").split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("|")) continue;
-    if (/^\|\s*-+/.test(trimmed) || /panel\s*\|\s*type/i.test(trimmed)) continue;
-    const cells = trimmed
-      .split("|")
-      .slice(1, -1)
-      .map((cell) => cell.trim());
-    if (cells.length < 4) continue;
-    const panel = Number.parseInt(cells[0], 10);
-    const type = cells[1] || "";
-    const planText = cleanPlanText(cells[2] || "");
-    const placement = cells[3] || "";
-    if (!Number.isFinite(panel) || !planText || /^none$/i.test(type)) continue;
-    rows.push({ panel, type, text: planText, placement });
+    if (!trimmed) continue;
+    if (/^\|?\s*-+/.test(trimmed) || /^panel\s+/i.test(trimmed) || /panel\s*\|\s*type/i.test(trimmed)) continue;
+
+    if (trimmed.includes("|")) {
+      const cells = trimmed
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((cell) => cell.trim());
+      const row = parsePlanCells(cells);
+      if (row) rows.push(row);
+      continue;
+    }
+
+    if (trimmed.includes("\t")) {
+      const row = parsePlanCells(trimmed.split(/\t+/).map((cell) => cell.trim()));
+      if (row) rows.push(row);
+      continue;
+    }
+
+    const rendered = parseRenderedPlanLine(trimmed);
+    if (rendered) rows.push(rendered);
   }
   return rows;
 }
@@ -1494,7 +1538,11 @@ function makePlanBalloon(row, panelCount) {
 function assistantApplyPlan() {
   const rows = parseLetteringPlan(ui.assistantInput.value);
   if (!rows.length) {
-    assistantCards([{ title: "No Plan Rows Found", body: "Paste a lettering-plan Markdown table with Panel, Type, Text, and Placement columns.", warn: true }]);
+    assistantCards([{
+      title: "No Plan Rows Found",
+      body: "Paste rows with Panel, Type, Text, and Placement. Example: | 1 | Caption | \"The sea raged.\" | Upper-left sky |",
+      warn: true
+    }]);
     return { message: "No plan rows found", warn: true };
   }
 
