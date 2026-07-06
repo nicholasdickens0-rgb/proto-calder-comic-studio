@@ -5,6 +5,8 @@ const ui = {
   imageInput: document.getElementById("imageInput"),
   projectInput: document.getElementById("projectInput"),
   loadSampleBtn: document.getElementById("loadSampleBtn"),
+  undoBtn: document.getElementById("undoBtn"),
+  redoBtn: document.getElementById("redoBtn"),
   saveProjectBtn: document.getElementById("saveProjectBtn"),
   exportBtn: document.getElementById("exportBtn"),
   addBalloonBtn: document.getElementById("addBalloonBtn"),
@@ -57,6 +59,14 @@ const state = {
   balloons: [],
   safeZones: [],
   panels: [],
+  history: {
+    undo: [],
+    redo: [],
+    limit: 80,
+    pendingInspector: false,
+    pendingNotes: false,
+    restoring: false
+  },
   options: {
     showSafe: true,
     showPanels: true,
@@ -198,6 +208,100 @@ function id(prefix) {
 
 function setStatus(text) {
   ui.statusText.textContent = text;
+}
+
+function snapshotData() {
+  return {
+    title: state.title,
+    imageName: state.imageName,
+    imageDataUrl: state.imageDataUrl,
+    notes: state.notes,
+    selected: state.selected ? { ...state.selected } : null,
+    balloons: state.balloons.map((balloon) => ({ ...normalizeBalloon(balloon) })),
+    safeZones: state.safeZones.map((safe) => ({ ...safe })),
+    panels: state.panels.map((panel) => ({ ...panel }))
+  };
+}
+
+function createSnapshot() {
+  return JSON.stringify(snapshotData());
+}
+
+function updateHistoryControls() {
+  ui.undoBtn.disabled = state.history.undo.length === 0;
+  ui.redoBtn.disabled = state.history.redo.length === 0;
+}
+
+function pushHistorySnapshot(snapshot, skipIfUnchanged = false) {
+  if (state.history.restoring || !snapshot) return;
+  const last = state.history.undo[state.history.undo.length - 1];
+  if ((skipIfUnchanged && snapshot === createSnapshot()) || snapshot === last) return;
+  state.history.undo.push(snapshot);
+  if (state.history.undo.length > state.history.limit) state.history.undo.shift();
+  state.history.redo = [];
+  updateHistoryControls();
+}
+
+function pushHistory() {
+  pushHistorySnapshot(createSnapshot());
+}
+
+function finishHistoryRestore(message) {
+  if (state.selected && !selectedObject()) state.selected = null;
+  ui.notesInput.value = state.notes;
+  updateCanvasSize();
+  syncInspector();
+  render();
+  updateChecks();
+  updateHistoryControls();
+  state.history.restoring = false;
+  state.history.pendingInspector = false;
+  state.history.pendingNotes = false;
+  setStatus(message);
+}
+
+function restoreSnapshot(snapshot, message) {
+  state.history.restoring = true;
+  const data = JSON.parse(snapshot);
+  state.title = data.title || "Untitled page";
+  state.imageName = data.imageName || "";
+  state.imageDataUrl = data.imageDataUrl || "";
+  state.notes = data.notes || "";
+  state.balloons = (data.balloons || []).map(normalizeBalloon);
+  state.safeZones = data.safeZones || [];
+  state.panels = data.panels || [];
+  state.selected = data.selected || null;
+
+  if (!state.imageDataUrl) {
+    state.image = null;
+    finishHistoryRestore(message);
+    return;
+  }
+
+  const img = new Image();
+  img.onload = () => {
+    state.image = img;
+    finishHistoryRestore(message);
+  };
+  img.onerror = () => {
+    state.image = null;
+    finishHistoryRestore(message);
+  };
+  img.src = state.imageDataUrl;
+}
+
+function undo() {
+  if (!state.history.undo.length) return;
+  state.history.redo.push(createSnapshot());
+  const snapshot = state.history.undo.pop();
+  restoreSnapshot(snapshot, "Undo");
+}
+
+function redo() {
+  if (!state.history.redo.length) return;
+  state.history.undo.push(createSnapshot());
+  const snapshot = state.history.redo.pop();
+  restoreSnapshot(snapshot, "Redo");
 }
 
 function pageRect() {
@@ -697,7 +801,8 @@ function hitTest(point) {
   return null;
 }
 
-function addBalloon() {
+function addBalloon(recordHistory = true) {
+  if (recordHistory) pushHistory();
   const rect = pageRect();
   const balloon = normalizeBalloon({
     id: id("balloon"),
@@ -727,6 +832,7 @@ function addBalloon() {
 function applyBubblePreset(balloon, presetName, rerender = true) {
   const preset = bubblePresets[presetName];
   if (!preset) return;
+  if (rerender) pushHistory();
   Object.assign(balloon, preset);
   balloon.preset = presetName;
   if (preset.style === "caption") balloon.hasTail = false;
@@ -740,6 +846,7 @@ function applyBubblePreset(balloon, presetName, rerender = true) {
 }
 
 function addSafeZone() {
+  pushHistory();
   const rect = pageRect();
   const safe = {
     id: id("safe"),
@@ -756,6 +863,7 @@ function addSafeZone() {
 }
 
 function addPanelGuide() {
+  pushHistory();
   const rect = pageRect();
   const panel = {
     id: id("panel"),
@@ -856,6 +964,7 @@ function deleteSelected() {
   if (!state.selected) return;
   const list = getList(state.selected.type);
   const index = list.findIndex((item) => item.id === state.selected.id);
+  if (index >= 0) pushHistory();
   if (index >= 0) list.splice(index, 1);
   select(null, null);
   render();
@@ -933,7 +1042,8 @@ canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
 
   if (state.tool === "balloon") {
-    addBalloon();
+    pushHistory();
+    addBalloon(false);
     const obj = selectedObject();
     obj.x = point.x - obj.w / 2;
     obj.y = point.y - obj.h / 2;
@@ -946,6 +1056,7 @@ canvas.addEventListener("pointerdown", (event) => {
 
   if (state.tool === "safe" || state.tool === "panel") {
     const type = state.tool;
+    const startSnapshot = createSnapshot();
     const newObj = {
       id: id(type),
       label: type === "safe" ? "Protected art" : "Panel guide",
@@ -957,7 +1068,7 @@ canvas.addEventListener("pointerdown", (event) => {
     if (type === "safe") state.safeZones.push(newObj);
     else state.panels.push(newObj);
     select(type, newObj.id);
-    state.drag = { type, id: newObj.id, part: "create", start: point };
+    state.drag = { type, id: newObj.id, part: "create", start: point, startSnapshot };
     render();
     return;
   }
@@ -976,7 +1087,8 @@ canvas.addEventListener("pointerdown", (event) => {
     id: hit.id,
     part: hit.part,
     start: point,
-    original: { ...obj }
+    original: { ...obj },
+    startSnapshot: createSnapshot()
   };
 });
 
@@ -1011,6 +1123,9 @@ canvas.addEventListener("pointermove", (event) => {
 
 canvas.addEventListener("pointerup", (event) => {
   canvas.releasePointerCapture(event.pointerId);
+  if (state.drag && state.drag.startSnapshot) {
+    pushHistorySnapshot(state.drag.startSnapshot, true);
+  }
   state.drag = null;
   syncInspector();
   updateChecks();
@@ -1038,7 +1153,10 @@ function loadImageFromDataUrl(dataUrl, name) {
 
 function loadImageFile(file) {
   const reader = new FileReader();
-  reader.onload = () => loadImageFromDataUrl(String(reader.result), file.name);
+  reader.onload = () => {
+    pushHistory();
+    loadImageFromDataUrl(String(reader.result), file.name);
+  };
   reader.readAsDataURL(file);
 }
 
@@ -1060,6 +1178,7 @@ async function loadSample() {
     const blob = await response.blob();
     const reader = new FileReader();
     reader.onload = () => {
+      pushHistory();
       loadImageFromDataUrl(String(reader.result), "Calder Page 7 clean");
       state.notes = "Sample page loaded from outputs. Mark protected zones, add balloons, then export.";
       ui.notesInput.value = state.notes;
@@ -1095,6 +1214,7 @@ function loadProjectFile(file) {
   reader.onload = () => {
     try {
       const data = JSON.parse(String(reader.result));
+      pushHistory();
       state.title = data.title || "Comic page";
       state.imageName = data.imageName || "";
       state.notes = data.notes || "";
@@ -1149,11 +1269,43 @@ function exportPng() {
   }, "image/png");
 }
 
+function handleInspectorInput() {
+  if (!state.selected) return;
+  if (!state.history.pendingInspector) {
+    pushHistory();
+    state.history.pendingInspector = true;
+  }
+  applyInspectorChange();
+}
+
+function handleInspectorChange() {
+  if (!state.selected) return;
+  if (!state.history.pendingInspector) pushHistory();
+  applyInspectorChange();
+  state.history.pendingInspector = false;
+}
+
+function handleNotesInput() {
+  if (!state.history.pendingNotes) {
+    pushHistory();
+    state.history.pendingNotes = true;
+  }
+  state.notes = ui.notesInput.value;
+}
+
+function handleNotesChange() {
+  if (!state.history.pendingNotes) pushHistory();
+  state.notes = ui.notesInput.value;
+  state.history.pendingNotes = false;
+}
+
 ui.tools.forEach((button) => button.addEventListener("click", () => setTool(button.dataset.tool)));
 ui.addBalloonBtn.addEventListener("click", addBalloon);
 ui.addSafeBtn.addEventListener("click", addSafeZone);
 ui.addPanelBtn.addEventListener("click", addPanelGuide);
 ui.deleteBtn.addEventListener("click", deleteSelected);
+ui.undoBtn.addEventListener("click", undo);
+ui.redoBtn.addEventListener("click", redo);
 ui.loadSampleBtn.addEventListener("click", loadSample);
 ui.saveProjectBtn.addEventListener("click", saveProject);
 ui.exportBtn.addEventListener("click", exportPng);
@@ -1191,9 +1343,8 @@ ui.showWarningsToggle.addEventListener("change", () => {
   state.options.showWarnings = ui.showWarningsToggle.checked;
   render();
 });
-ui.notesInput.addEventListener("input", () => {
-  state.notes = ui.notesInput.value;
-});
+ui.notesInput.addEventListener("input", handleNotesInput);
+ui.notesInput.addEventListener("change", handleNotesChange);
 
 [
   ui.textInput,
@@ -1216,14 +1367,28 @@ ui.notesInput.addEventListener("input", () => {
   ui.textureInput,
   ui.glowInput
 ].forEach((input) => {
-  input.addEventListener("input", applyInspectorChange);
-  input.addEventListener("change", applyInspectorChange);
+  input.addEventListener("input", handleInspectorInput);
+  input.addEventListener("change", handleInspectorChange);
 });
 
 window.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  const shortcut = event.ctrlKey || event.metaKey;
+  if (shortcut && key === "z") {
+    event.preventDefault();
+    if (event.shiftKey) redo();
+    else undo();
+    return;
+  }
+  if (shortcut && key === "y") {
+    event.preventDefault();
+    redo();
+    return;
+  }
+
   if (event.key === "Delete" || event.key === "Backspace") {
     const activeTag = document.activeElement && document.activeElement.tagName;
-    if (activeTag !== "INPUT" && activeTag !== "TEXTAREA") {
+    if (activeTag !== "INPUT" && activeTag !== "TEXTAREA" && activeTag !== "SELECT") {
       deleteSelected();
     }
   }
@@ -1232,4 +1397,5 @@ window.addEventListener("keydown", (event) => {
 updateCanvasSize();
 render();
 updateChecks();
+updateHistoryControls();
 setTool("select");

@@ -1,6 +1,6 @@
 {
   "name": "proto-calder-comic-studio",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "A static comic lettering and page-format tool for Calder's Remnants.",
   "scripts": {

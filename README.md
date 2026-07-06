@@ -38,6 +38,7 @@ http://localhost:5177
 - Add panel guides.
 - Move and resize balloons/zones/guides.
 - Drag balloon tail points.
+- Undo and redo page edits with buttons or keyboard shortcuts.
 - Check whether balloons overlap protected art zones.
 - Export a lettered PNG.
 - Save and load a self-contained project JSON file.
