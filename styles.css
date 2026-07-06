@@ -32,6 +32,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -189,6 +190,7 @@ h2 {
 }
 
 .field input,
+.field select,
 .field textarea,
 #notesInput {
   width: 100%;
@@ -199,6 +201,28 @@ h2 {
   padding: 8px;
 }
 
+.field select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #697066 50%),
+    linear-gradient(135deg, #697066 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 11px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.field input[type="color"] {
+  height: 38px;
+  padding: 3px;
+}
+
+.field input[type="range"] {
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 textarea {
   resize: vertical;
 }
@@ -207,6 +231,54 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.bubble-lab {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0 4px;
+  margin: 2px 0 12px;
+}
+
+.bubble-lab h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: #4d514b;
+  letter-spacing: 0.03em;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 11px;
+}
+
+.preset-grid button {
+  min-height: 34px;
+  padding: 7px 8px;
+}
+
+.preset-grid button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.swatch-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.toggle-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 2px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .toggles {
@@ -325,4 +397,3 @@ canvas {
     border-bottom: 1px solid var(--line);
   }
 }
-

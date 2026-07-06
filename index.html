@@ -90,6 +90,75 @@
                 <textarea id="textInput" rows="5"></textarea>
               </label>
 
+              <div class="bubble-lab text-only" data-for="balloon">
+                <h3>Bubble Lab</h3>
+                <div class="preset-grid">
+                  <button type="button" data-bubble-preset="classic">Classic</button>
+                  <button type="button" data-bubble-preset="manga">Manga</button>
+                  <button type="button" data-bubble-preset="whisper">Whisper</button>
+                  <button type="button" data-bubble-preset="shout">Shout</button>
+                  <button type="button" data-bubble-preset="thought">Thought</button>
+                  <button type="button" data-bubble-preset="caption">Caption</button>
+                  <button type="button" data-bubble-preset="magic">Rune Glow</button>
+                </div>
+
+                <label class="field">
+                  Style
+                  <select id="styleInput">
+                    <option value="rounded">Rounded</option>
+                    <option value="oval">Classic oval</option>
+                    <option value="manga">Soft manga</option>
+                    <option value="caption">Caption box</option>
+                    <option value="whisper">Whisper</option>
+                    <option value="shout">Shout burst</option>
+                    <option value="thought">Thought cloud</option>
+                    <option value="magic">Rune glow</option>
+                  </select>
+                </label>
+
+                <div class="swatch-row">
+                  <label class="field">
+                    Fill
+                    <input id="fillInput" type="color">
+                  </label>
+                  <label class="field">
+                    Stroke
+                    <input id="strokeColorInput" type="color">
+                  </label>
+                  <label class="field">
+                    Text
+                    <input id="textColorInput" type="color">
+                  </label>
+                </div>
+
+                <div class="field-row">
+                  <label class="field">
+                    Wobble
+                    <input id="wobbleInput" type="range" min="0" max="36" step="1">
+                  </label>
+                  <label class="field">
+                    Texture
+                    <input id="textureInput" type="range" min="0" max="100" step="1">
+                  </label>
+                </div>
+
+                <div class="field-row">
+                  <label class="field">
+                    Glow
+                    <input id="glowInput" type="range" min="0" max="50" step="1">
+                  </label>
+                  <label class="field">
+                    Tail
+                    <input id="tailWidthInput" type="range" min="4" max="42" step="1">
+                  </label>
+                </div>
+
+                <label class="toggle-field">
+                  <input id="tailToggle" type="checkbox">
+                  Tail visible
+                </label>
+              </div>
+
               <div class="field-row">
                 <label class="field">
                   X
@@ -152,4 +221,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-

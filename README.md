@@ -32,6 +32,8 @@ http://localhost:5177
 
 - Import a clean comic page image.
 - Add speech balloons with editable text.
+- Choose Bubble Lab presets for classic, manga, whisper, shout, thought, caption, and rune-glow lettering.
+- Tune bubble style, fill, stroke, text color, tail width, wobble, paper texture, and glow.
 - Add protected art zones for faces, hands, babies, runes, and key acting.
 - Add panel guides.
 - Move and resize balloons/zones/guides.

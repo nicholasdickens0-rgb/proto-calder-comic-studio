@@ -30,6 +30,16 @@ const ui = {
   paddingInput: document.getElementById("paddingInput"),
   radiusInput: document.getElementById("radiusInput"),
   strokeInput: document.getElementById("strokeInput"),
+  styleInput: document.getElementById("styleInput"),
+  fillInput: document.getElementById("fillInput"),
+  strokeColorInput: document.getElementById("strokeColorInput"),
+  textColorInput: document.getElementById("textColorInput"),
+  tailToggle: document.getElementById("tailToggle"),
+  tailWidthInput: document.getElementById("tailWidthInput"),
+  wobbleInput: document.getElementById("wobbleInput"),
+  textureInput: document.getElementById("textureInput"),
+  glowInput: document.getElementById("glowInput"),
+  bubblePresetButtons: Array.from(document.querySelectorAll("[data-bubble-preset]")),
   notesInput: document.getElementById("notesInput"),
   checkList: document.getElementById("checkList")
 };
@@ -59,6 +69,128 @@ const sampleCandidates = [
   "/outputs/Calder_Remnants_Page_007_full_color_v1_lettering_first.png",
   "./sample-pages/Calder_Remnants_Page_007_full_color_v1_lettering_first.png"
 ];
+
+const balloonDefaults = {
+  style: "rounded",
+  preset: "classic",
+  fill: "#fffdf4",
+  strokeColor: "#171717",
+  textColor: "#171717",
+  hasTail: true,
+  tailWidth: 20,
+  wobble: 0,
+  texture: 0,
+  glow: 0,
+  fillOpacity: 1
+};
+
+const bubblePresets = {
+  classic: {
+    style: "oval",
+    fill: "#fffdf4",
+    strokeColor: "#171717",
+    textColor: "#171717",
+    radius: 36,
+    stroke: 3,
+    padding: 20,
+    hasTail: true,
+    tailWidth: 20,
+    wobble: 0,
+    texture: 8,
+    glow: 0,
+    fillOpacity: 1
+  },
+  manga: {
+    style: "manga",
+    fill: "#fffdf7",
+    strokeColor: "#111111",
+    textColor: "#111111",
+    radius: 38,
+    stroke: 3,
+    padding: 20,
+    hasTail: true,
+    tailWidth: 18,
+    wobble: 13,
+    texture: 14,
+    glow: 0,
+    fillOpacity: 1
+  },
+  whisper: {
+    style: "whisper",
+    fill: "#ffffff",
+    strokeColor: "#585858",
+    textColor: "#2b2b2b",
+    radius: 36,
+    stroke: 2,
+    padding: 20,
+    hasTail: true,
+    tailWidth: 12,
+    wobble: 4,
+    texture: 3,
+    glow: 0,
+    fillOpacity: 0.92
+  },
+  shout: {
+    style: "shout",
+    fill: "#fff8df",
+    strokeColor: "#111111",
+    textColor: "#111111",
+    radius: 8,
+    stroke: 4,
+    padding: 22,
+    hasTail: true,
+    tailWidth: 26,
+    wobble: 16,
+    texture: 8,
+    glow: 0,
+    fillOpacity: 1
+  },
+  thought: {
+    style: "thought",
+    fill: "#fffdf8",
+    strokeColor: "#161616",
+    textColor: "#161616",
+    radius: 42,
+    stroke: 3,
+    padding: 22,
+    hasTail: true,
+    tailWidth: 18,
+    wobble: 8,
+    texture: 10,
+    glow: 0,
+    fillOpacity: 1
+  },
+  caption: {
+    style: "caption",
+    fill: "#f8eed2",
+    strokeColor: "#2b2115",
+    textColor: "#241b12",
+    radius: 8,
+    stroke: 2,
+    padding: 16,
+    hasTail: false,
+    tailWidth: 4,
+    wobble: 0,
+    texture: 18,
+    glow: 0,
+    fillOpacity: 0.98
+  },
+  magic: {
+    style: "magic",
+    fill: "#eefbff",
+    strokeColor: "#2b7f9e",
+    textColor: "#143443",
+    radius: 42,
+    stroke: 3,
+    padding: 22,
+    hasTail: true,
+    tailWidth: 18,
+    wobble: 6,
+    texture: 6,
+    glow: 28,
+    fillOpacity: 0.9
+  }
+};
 
 function id(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -125,6 +257,177 @@ function roundedRectPath(context, x, y, w, h, radius) {
   context.closePath();
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeBalloon(balloon) {
+  Object.assign(balloon, {
+    ...balloonDefaults,
+    ...balloon
+  });
+  balloon.style = balloon.style || "rounded";
+  balloon.preset = balloon.preset || "";
+  balloon.tailWidth = Number.isFinite(Number(balloon.tailWidth)) ? Number(balloon.tailWidth) : balloonDefaults.tailWidth;
+  balloon.wobble = Number.isFinite(Number(balloon.wobble)) ? Number(balloon.wobble) : balloonDefaults.wobble;
+  balloon.texture = Number.isFinite(Number(balloon.texture)) ? Number(balloon.texture) : balloonDefaults.texture;
+  balloon.glow = Number.isFinite(Number(balloon.glow)) ? Number(balloon.glow) : balloonDefaults.glow;
+  balloon.fillOpacity = Number.isFinite(Number(balloon.fillOpacity)) ? Number(balloon.fillOpacity) : balloonDefaults.fillOpacity;
+  return balloon;
+}
+
+function hexToRgba(hex, alpha) {
+  const fallback = `rgba(255, 253, 244, ${alpha})`;
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return fallback;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function seedFromId(value) {
+  let seed = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    seed = (seed * 31 + value.charCodeAt(i)) % 9973;
+  }
+  return seed;
+}
+
+function ellipsePath(context, x, y, w, h) {
+  context.beginPath();
+  context.ellipse(x + w / 2, y + h / 2, Math.max(1, w / 2), Math.max(1, h / 2), 0, 0, Math.PI * 2);
+  context.closePath();
+}
+
+function organicEllipsePath(context, x, y, w, h, wobble, seed) {
+  const steps = 34;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const rx = Math.max(1, w / 2);
+  const ry = Math.max(1, h / 2);
+  context.beginPath();
+  for (let i = 0; i <= steps; i += 1) {
+    const a = (Math.PI * 2 * i) / steps;
+    const wave = Math.sin(a * 3 + seed) * 0.55 + Math.sin(a * 7 + seed * 0.37) * 0.45;
+    const offset = wave * wobble;
+    const px = cx + Math.cos(a) * (rx + offset);
+    const py = cy + Math.sin(a) * (ry + offset * 0.7);
+    if (i === 0) context.moveTo(px, py);
+    else context.lineTo(px, py);
+  }
+  context.closePath();
+}
+
+function burstPath(context, x, y, w, h, wobble, seed) {
+  const points = 26;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const rx = Math.max(1, w / 2);
+  const ry = Math.max(1, h / 2);
+  context.beginPath();
+  for (let i = 0; i < points; i += 1) {
+    const a = (Math.PI * 2 * i) / points - Math.PI / 2;
+    const spike = i % 2 === 0 ? 1.09 : 0.78;
+    const wave = Math.sin(i * 1.7 + seed) * wobble * 0.01;
+    const px = cx + Math.cos(a) * rx * (spike + wave);
+    const py = cy + Math.sin(a) * ry * (spike + wave);
+    if (i === 0) context.moveTo(px, py);
+    else context.lineTo(px, py);
+  }
+  context.closePath();
+}
+
+function bubbleBodyPath(context, balloon, x, y, w, h, radius, scale) {
+  const style = balloon.style || "rounded";
+  const wobble = (Number(balloon.wobble) || 0) * scale;
+  const seed = seedFromId(balloon.id || style);
+
+  if (style === "oval" || style === "whisper" || style === "magic") {
+    if (wobble > 0) organicEllipsePath(context, x, y, w, h, wobble, seed);
+    else ellipsePath(context, x, y, w, h);
+    return;
+  }
+
+  if (style === "manga" || style === "thought") {
+    organicEllipsePath(context, x, y, w, h, Math.max(5 * scale, wobble), seed);
+    return;
+  }
+
+  if (style === "shout") {
+    burstPath(context, x, y, w, h, Math.max(8 * scale, wobble), seed);
+    return;
+  }
+
+  roundedRectPath(context, x, y, w, h, radius);
+}
+
+function nearestTailAnchor(x, y, w, h, tailX, tailY) {
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const dx = tailX - cx;
+  const dy = tailY - cy;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    return {
+      x: dx < 0 ? x : x + w,
+      y: clamp(tailY, y + h * 0.22, y + h * 0.78)
+    };
+  }
+  return {
+    x: clamp(tailX, x + w * 0.18, x + w * 0.82),
+    y: dy < 0 ? y : y + h
+  };
+}
+
+function drawTriangleTail(context, balloon, x, y, w, h, tailX, tailY, scale) {
+  if (!balloon.hasTail) return;
+  const anchor = nearestTailAnchor(x, y, w, h, tailX, tailY);
+  const width = Math.max(4, Number(balloon.tailWidth) || 18) * scale;
+  const horizontal = anchor.x === x || anchor.x === x + w;
+  context.beginPath();
+  if (horizontal) {
+    context.moveTo(anchor.x, anchor.y - width / 2);
+    context.lineTo(tailX, tailY);
+    context.lineTo(anchor.x, anchor.y + width / 2);
+  } else {
+    context.moveTo(anchor.x - width / 2, anchor.y);
+    context.lineTo(tailX, tailY);
+    context.lineTo(anchor.x + width / 2, anchor.y);
+  }
+  context.closePath();
+}
+
+function drawThoughtTail(context, balloon, x, y, w, h, tailX, tailY, scale) {
+  if (!balloon.hasTail) return;
+  const anchor = nearestTailAnchor(x, y, w, h, tailX, tailY);
+  const sizes = [12, 8, 5].map((size) => size * scale);
+  context.beginPath();
+  for (let i = 0; i < sizes.length; i += 1) {
+    const t = (i + 1) / (sizes.length + 1);
+    const px = anchor.x + (tailX - anchor.x) * t;
+    const py = anchor.y + (tailY - anchor.y) * t;
+    context.moveTo(px + sizes[i], py);
+    context.arc(px, py, sizes[i], 0, Math.PI * 2);
+  }
+}
+
+function drawTexture(context, balloon, x, y, w, h, scale) {
+  const strength = clamp(Number(balloon.texture) || 0, 0, 100);
+  if (!strength) return;
+
+  const spacing = Math.max(8, 18 * scale);
+  context.save();
+  context.globalAlpha = strength / 520;
+  context.strokeStyle = balloon.strokeColor || "#171717";
+  context.lineWidth = Math.max(0.5, scale);
+  for (let yy = y + spacing / 2; yy < y + h; yy += spacing) {
+    context.beginPath();
+    context.moveTo(x + 8 * scale, yy);
+    context.lineTo(x + w - 8 * scale, yy + Math.sin(yy * 0.05) * 2 * scale);
+    context.stroke();
+  }
+  context.restore();
+}
+
 function wrapText(context, text, maxWidth) {
   const lines = [];
   for (const rawLine of text.split("\n")) {
@@ -169,6 +472,7 @@ function fitBalloonText(context, balloon) {
 }
 
 function drawBalloon(context, balloon, scale = 1, selected = false, exportMode = false) {
+  normalizeBalloon(balloon);
   const x = balloon.x * scale;
   const y = balloon.y * scale;
   const w = balloon.w * scale;
@@ -177,29 +481,38 @@ function drawBalloon(context, balloon, scale = 1, selected = false, exportMode =
   const tailY = balloon.tailY * scale;
   const stroke = balloon.stroke * scale;
   const radius = balloon.radius * scale;
+  const style = balloon.style || "rounded";
+  const fillAlpha = clamp(Number(balloon.fillOpacity) || 1, 0.2, 1);
 
   context.save();
   context.lineJoin = "round";
   context.lineCap = "round";
-  context.fillStyle = balloon.fill;
+  context.fillStyle = hexToRgba(balloon.fill, fillAlpha);
   context.strokeStyle = balloon.strokeColor;
   context.lineWidth = Math.max(1.5, stroke);
+  if (style === "whisper") context.setLineDash([7 * scale, 7 * scale]);
+  if (style === "magic" && balloon.glow > 0) {
+    context.shadowColor = "rgba(91, 188, 224, 0.72)";
+    context.shadowBlur = Number(balloon.glow) * scale;
+  }
 
-  if (balloon.hasTail) {
-    const baseX = Math.max(x + 24 * scale, Math.min(x + w - 24 * scale, tailX));
-    const tailBaseY = tailY < y + h / 2 ? y : y + h;
-    context.beginPath();
-    context.moveTo(baseX - 10 * scale, tailBaseY);
-    context.lineTo(tailX, tailY);
-    context.lineTo(baseX + 10 * scale, tailBaseY);
-    context.closePath();
+  if (balloon.hasTail && style !== "caption") {
+    if (style === "thought") drawThoughtTail(context, balloon, x, y, w, h, tailX, tailY, scale);
+    else drawTriangleTail(context, balloon, x, y, w, h, tailX, tailY, scale);
     context.fill();
     context.stroke();
   }
 
-  roundedRectPath(context, x, y, w, h, radius);
+  bubbleBodyPath(context, balloon, x, y, w, h, radius, scale);
   context.fill();
+  context.save();
+  bubbleBodyPath(context, balloon, x, y, w, h, radius, scale);
+  context.clip();
+  drawTexture(context, balloon, x, y, w, h, scale);
+  context.restore();
   context.stroke();
+  context.setLineDash([]);
+  context.shadowBlur = 0;
 
   const working = {
     ...balloon,
@@ -224,10 +537,12 @@ function drawBalloon(context, balloon, scale = 1, selected = false, exportMode =
 
   if (selected && !exportMode) {
     drawSelection(context, balloon, scale, "#2f6f67");
-    context.fillStyle = "#2f6f67";
-    context.beginPath();
-    context.arc(tailX, tailY, 6, 0, Math.PI * 2);
-    context.fill();
+    if (balloon.hasTail && style !== "caption") {
+      context.fillStyle = "#2f6f67";
+      context.beginPath();
+      context.arc(tailX, tailY, 6, 0, Math.PI * 2);
+      context.fill();
+    }
   }
 
   context.restore();
@@ -351,6 +666,7 @@ function hitHandle(rect, point) {
 }
 
 function hitTail(balloon, point) {
+  if (!balloon.hasTail || balloon.style === "caption") return false;
   return Math.hypot(point.x - balloon.tailX, point.y - balloon.tailY) <= 12;
 }
 
@@ -383,7 +699,7 @@ function hitTest(point) {
 
 function addBalloon() {
   const rect = pageRect();
-  const balloon = {
+  const balloon = normalizeBalloon({
     id: id("balloon"),
     x: Math.round(rect.w * 0.52),
     y: Math.round(rect.h * 0.08),
@@ -400,11 +716,27 @@ function addBalloon() {
     hasTail: true,
     tailX: Math.round(rect.w * 0.58),
     tailY: Math.round(rect.h * 0.22)
-  };
+  });
+  applyBubblePreset(balloon, "classic", false);
   state.balloons.push(balloon);
   select("balloon", balloon.id);
   render();
   updateChecks();
+}
+
+function applyBubblePreset(balloon, presetName, rerender = true) {
+  const preset = bubblePresets[presetName];
+  if (!preset) return;
+  Object.assign(balloon, preset);
+  balloon.preset = presetName;
+  if (preset.style === "caption") balloon.hasTail = false;
+  normalizeBalloon(balloon);
+  if (rerender) {
+    syncInspector();
+    render();
+    updateChecks();
+    setStatus(`Applied ${presetName} bubble preset`);
+  }
 }
 
 function addSafeZone() {
@@ -459,11 +791,24 @@ function syncInspector() {
   ui.hInput.value = Math.round(obj.h);
 
   if (state.selected.type === "balloon") {
+    normalizeBalloon(obj);
     ui.textInput.value = obj.text;
     ui.fontSizeInput.value = obj.fontSize;
     ui.paddingInput.value = obj.padding;
     ui.radiusInput.value = obj.radius;
     ui.strokeInput.value = obj.stroke;
+    ui.styleInput.value = obj.style;
+    ui.fillInput.value = obj.fill;
+    ui.strokeColorInput.value = obj.strokeColor;
+    ui.textColorInput.value = obj.textColor;
+    ui.tailToggle.checked = Boolean(obj.hasTail);
+    ui.tailWidthInput.value = obj.tailWidth;
+    ui.wobbleInput.value = obj.wobble;
+    ui.textureInput.value = obj.texture;
+    ui.glowInput.value = obj.glow;
+    ui.bubblePresetButtons.forEach((button) => {
+      button.classList.toggle("active", button.dataset.bubblePreset === obj.preset);
+    });
   }
 
   if (state.selected.type === "safe") {
@@ -485,6 +830,18 @@ function applyInspectorChange() {
     obj.padding = Math.max(4, Number(ui.paddingInput.value) || 18);
     obj.radius = Math.max(0, Number(ui.radiusInput.value) || 28);
     obj.stroke = Math.max(1, Number(ui.strokeInput.value) || 3);
+    obj.style = ui.styleInput.value || "rounded";
+    obj.fill = ui.fillInput.value || "#fffdf4";
+    obj.strokeColor = ui.strokeColorInput.value || "#171717";
+    obj.textColor = ui.textColorInput.value || "#171717";
+    obj.hasTail = ui.tailToggle.checked && obj.style !== "caption";
+    ui.tailToggle.checked = obj.hasTail;
+    obj.tailWidth = Math.max(0, Number(ui.tailWidthInput.value) || 0);
+    obj.wobble = Math.max(0, Number(ui.wobbleInput.value) || 0);
+    obj.texture = Math.max(0, Number(ui.textureInput.value) || 0);
+    obj.glow = Math.max(0, Number(ui.glowInput.value) || 0);
+    obj.preset = "";
+    ui.bubblePresetButtons.forEach((button) => button.classList.remove("active"));
   }
 
   if (state.selected.type === "safe") {
@@ -716,7 +1073,7 @@ async function loadSample() {
 function projectData() {
   return {
     app: "Proto Calder Comic Studio",
-    version: 1,
+    version: 2,
     title: state.title,
     imageName: state.imageName,
     imageDataUrl: state.imageDataUrl,
@@ -742,7 +1099,7 @@ function loadProjectFile(file) {
       state.imageName = data.imageName || "";
       state.notes = data.notes || "";
       ui.notesInput.value = state.notes;
-      state.balloons = data.balloons || [];
+      state.balloons = (data.balloons || []).map(normalizeBalloon);
       state.safeZones = data.safeZones || [];
       state.panels = data.panels || [];
       if (data.imageDataUrl) {
@@ -800,6 +1157,13 @@ ui.deleteBtn.addEventListener("click", deleteSelected);
 ui.loadSampleBtn.addEventListener("click", loadSample);
 ui.saveProjectBtn.addEventListener("click", saveProject);
 ui.exportBtn.addEventListener("click", exportPng);
+ui.bubblePresetButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!state.selected || state.selected.type !== "balloon") return;
+    const obj = selectedObject();
+    if (obj) applyBubblePreset(obj, button.dataset.bubblePreset);
+  });
+});
 ui.imageInput.addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (file) loadImageFile(file);
@@ -841,8 +1205,20 @@ ui.notesInput.addEventListener("input", () => {
   ui.fontSizeInput,
   ui.paddingInput,
   ui.radiusInput,
-  ui.strokeInput
-].forEach((input) => input.addEventListener("input", applyInspectorChange));
+  ui.strokeInput,
+  ui.styleInput,
+  ui.fillInput,
+  ui.strokeColorInput,
+  ui.textColorInput,
+  ui.tailToggle,
+  ui.tailWidthInput,
+  ui.wobbleInput,
+  ui.textureInput,
+  ui.glowInput
+].forEach((input) => {
+  input.addEventListener("input", applyInspectorChange);
+  input.addEventListener("change", applyInspectorChange);
+});
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Delete" || event.key === "Backspace") {
