@@ -202,16 +202,16 @@ const bubblePresets = {
   sfx: {
     style: "sfx",
     fill: "#ffffff",
-    strokeColor: "#101010",
-    textColor: "#fff4d0",
+    strokeColor: "#05070d",
+    textColor: "#ffe88d",
     radius: 0,
-    stroke: 5,
-    padding: 6,
+    stroke: 8,
+    padding: 2,
     hasTail: false,
     tailWidth: 4,
-    wobble: 0,
+    wobble: 18,
     texture: 0,
-    glow: 10,
+    glow: 24,
     fillOpacity: 0
   },
   magic: {
@@ -654,6 +654,53 @@ function fitBalloonText(context, balloon) {
   return { size: 12, lines: wrapText(context, balloon.text, maxW), lineHeight: 14.5 };
 }
 
+function sfxBurstPath(context, x, y, w, h, seed) {
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const points = 18;
+  const outerX = w / 2;
+  const outerY = h / 2;
+  const innerX = outerX * 0.72;
+  const innerY = outerY * 0.62;
+  context.beginPath();
+  for (let i = 0; i < points; i += 1) {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * i) / points;
+    const jag = 0.88 + (((seed + i * 37) % 29) / 100);
+    const radiusX = (i % 2 === 0 ? outerX : innerX) * jag;
+    const radiusY = (i % 2 === 0 ? outerY : innerY) * jag;
+    const px = cx + Math.cos(angle) * radiusX;
+    const py = cy + Math.sin(angle) * radiusY;
+    if (i === 0) context.moveTo(px, py);
+    else context.lineTo(px, py);
+  }
+  context.closePath();
+}
+
+function drawSfxCracks(context, x, y, w, h, seed, scale) {
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const arms = [
+    [-0.48, -0.25, -0.72, -0.46, -0.9, -0.39],
+    [0.42, -0.2, 0.68, -0.38, 0.9, -0.3],
+    [-0.22, 0.36, -0.42, 0.58, -0.58, 0.5],
+    [0.24, 0.34, 0.42, 0.58, 0.64, 0.52]
+  ];
+  context.save();
+  context.strokeStyle = "rgba(255, 244, 190, 0.72)";
+  context.lineWidth = Math.max(1.2, 1.8 * scale);
+  context.lineCap = "round";
+  for (const [x1, y1, x2, y2, x3, y3] of arms) {
+    const jitter = ((seed % 11) - 5) * 0.003;
+    context.beginPath();
+    context.moveTo(cx + w * x1, cy + h * y1);
+    context.lineTo(cx + w * (x2 + jitter), cy + h * y2);
+    context.lineTo(cx + w * x3, cy + h * (y3 - jitter));
+    context.stroke();
+    seed += 17;
+  }
+  context.restore();
+}
+
 function drawSfxText(context, balloon, scale = 1, selected = false, exportMode = false) {
   const x = balloon.x * scale;
   const y = balloon.y * scale;
@@ -669,25 +716,59 @@ function drawSfxText(context, balloon, scale = 1, selected = false, exportMode =
     fontSize: balloon.fontSize * scale
   };
   const fit = fitBalloonText(context, working);
+  const seed = seedFromId(balloon.id || balloon.text || "sfx");
+  const wobble = Math.max(Number(balloon.wobble) || 0, 10);
+  const burstPadX = (12 + wobble * 0.45) * scale;
+  const burstPadY = (6 + wobble * 0.28) * scale;
 
   context.save();
+  context.shadowColor = "transparent";
+  context.shadowBlur = 0;
+  sfxBurstPath(context, x - burstPadX, y - burstPadY, w + burstPadX * 2, h + burstPadY * 2, seed);
+  context.fillStyle = "rgba(255, 234, 132, 0.24)";
+  context.strokeStyle = "rgba(8, 10, 16, 0.82)";
+  context.lineWidth = Math.max(2.5, 3.5 * scale);
+  context.fill();
+  context.stroke();
+  drawSfxCracks(context, x - burstPadX, y - burstPadY, w + burstPadX * 2, h + burstPadY * 2, seed, scale);
+
+  context.translate(x + w / 2, y + h / 2);
+  context.rotate((((seed % 9) - 4) * Math.PI) / 240);
+  context.translate(-(x + w / 2), -(y + h / 2));
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.lineJoin = "round";
   context.lineCap = "round";
   context.font = `900 ${fit.size}px "Impact", "Arial Black", "Segoe UI", sans-serif`;
+  const totalH = fit.lines.length * fit.lineHeight;
   context.strokeStyle = balloon.strokeColor || "#111111";
-  context.fillStyle = balloon.textColor || "#fff4d0";
   context.lineWidth = Math.max(3, balloon.stroke * scale);
   if (balloon.glow > 0) {
     context.shadowColor = "rgba(255, 238, 160, 0.65)";
     context.shadowBlur = Number(balloon.glow) * scale;
   }
 
-  const totalH = fit.lines.length * fit.lineHeight;
   let lineY = y + h / 2 - totalH / 2 + fit.lineHeight / 2;
   for (const line of fit.lines) {
     context.strokeText(line, x + w / 2, lineY);
+    lineY += fit.lineHeight;
+  }
+  context.shadowColor = "transparent";
+  context.shadowBlur = 0;
+  context.strokeStyle = "#f8d574";
+  context.lineWidth = Math.max(2, (balloon.stroke * 0.38) * scale);
+  lineY = y + h / 2 - totalH / 2 + fit.lineHeight / 2;
+  for (const line of fit.lines) {
+    context.strokeText(line, x + w / 2, lineY);
+    lineY += fit.lineHeight;
+  }
+  context.fillStyle = balloon.textColor || "#fff4d0";
+  if (balloon.glow > 0) {
+    context.shadowColor = "rgba(255, 238, 160, 0.45)";
+    context.shadowBlur = Number(balloon.glow) * 0.6 * scale;
+  }
+  lineY = y + h / 2 - totalH / 2 + fit.lineHeight / 2;
+  for (const line of fit.lines) {
     context.fillText(line, x + w / 2, lineY);
     lineY += fit.lineHeight;
   }
@@ -1490,7 +1571,18 @@ function parseLetteringPlan(text) {
   return rows;
 }
 
-function inferredPanelRect(panelNumber, panelCount) {
+function inferredPanelWeights(panelCount) {
+  const presets = {
+    3: [0.31, 0.39, 0.3],
+    4: [0.29, 0.3, 0.22, 0.19],
+    5: [0.255, 0.265, 0.205, 0.18, 0.095]
+  };
+  const weights = presets[panelCount] || Array.from({ length: panelCount }, () => 1);
+  const total = weights.reduce((sum, value) => sum + value, 0) || 1;
+  return weights.map((value) => value / total);
+}
+
+function legacyInferredPanelRect(panelNumber, panelCount) {
   const rect = pageRect();
   const gutters = 8;
   const panelH = (rect.h - gutters * (panelCount - 1)) / panelCount;
@@ -1502,13 +1594,52 @@ function inferredPanelRect(panelNumber, panelCount) {
   };
 }
 
+function inferredPanelRect(panelNumber, panelCount) {
+  const rect = pageRect();
+  const gutters = panelCount >= 4 ? 10 : 8;
+  const weights = inferredPanelWeights(panelCount);
+  const usableH = rect.h - gutters * (panelCount - 1);
+  let y = 0;
+  for (let index = 0; index < panelNumber - 1; index += 1) {
+    y += usableH * weights[index] + gutters;
+  }
+  return {
+    x: 0,
+    y: Math.round(y),
+    w: rect.w,
+    h: Math.round(usableH * weights[panelNumber - 1])
+  };
+}
+
+function looksLikeLegacyPanelGuides(panelCount) {
+  if (state.panels.length !== panelCount || panelCount <= 1) return false;
+  const rect = pageRect();
+  return state.panels
+    .slice()
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .every((panel, index) => {
+      const legacy = legacyInferredPanelRect(index + 1, panelCount);
+      return (
+        panel.label === `Panel ${index + 1}` &&
+        Math.abs(panel.x - (legacy.x + 6)) <= 3 &&
+        Math.abs(panel.y - (legacy.y + 6)) <= 3 &&
+        Math.abs(panel.w - (legacy.w - 12)) <= 4 &&
+        Math.abs(panel.h - (legacy.h - 12)) <= 4 &&
+        Math.abs(panel.w - (rect.w - 12)) <= 4
+      );
+    });
+}
+
 function ensurePlanPanelGuides(panelCount) {
-  if (state.panels.length || panelCount <= 1) return;
+  if (panelCount <= 1) return;
+  if (looksLikeLegacyPanelGuides(panelCount)) state.panels = [];
+  if (state.panels.length) return;
   for (let panel = 1; panel <= panelCount; panel += 1) {
     const rect = inferredPanelRect(panel, panelCount);
     state.panels.push({
       id: id("panel"),
       label: `Panel ${panel}`,
+      generatedByAssistant: true,
       x: rect.x + 6,
       y: rect.y + 6,
       w: rect.w - 12,
@@ -1534,6 +1665,18 @@ function rectFromPlacementHint(panelRect, balloon, placement) {
   const hint = (placement || "").toLowerCase();
   let x = panelRect.x + panelRect.w * 0.5 - balloon.w / 2;
   let y = panelRect.y + panelRect.h * 0.5 - balloon.h / 2;
+  const hasPlacementCue = /(left|right|center|upper|top|lower|bottom|low-|sky|window|rope|eye|impact|corner)/.test(hint);
+
+  if (!hasPlacementCue && balloon.style === "sfx") {
+    x = panelRect.x + panelRect.w * 0.58 - balloon.w / 2;
+    y = panelRect.y + panelRect.h * 0.4 - balloon.h / 2;
+  } else if (!hasPlacementCue && balloon.style === "caption") {
+    x = panelRect.x + panelRect.w - balloon.w - panelRect.w * 0.06;
+    y = panelRect.y + panelRect.h * 0.08;
+  } else if (!hasPlacementCue && balloon.hasTail) {
+    x = panelRect.x + panelRect.w * 0.08;
+    y = panelRect.y + panelRect.h * 0.1;
+  }
 
   if (hint.includes("left")) x = panelRect.x + panelRect.w * 0.06;
   if (hint.includes("right")) x = panelRect.x + panelRect.w - balloon.w - panelRect.w * 0.06;
@@ -1543,7 +1686,10 @@ function rectFromPlacementHint(panelRect, balloon, placement) {
   if (hint.includes("lower") || hint.includes("bottom")) y = panelRect.y + panelRect.h - balloon.h - panelRect.h * 0.08;
   if (hint.includes("low-")) y = panelRect.y + panelRect.h - balloon.h - panelRect.h * 0.08;
   if (hint.includes("window")) y = panelRect.y + panelRect.h * 0.22;
-  if (hint.includes("rope")) y = panelRect.y + panelRect.h * 0.35;
+  if (hint.includes("rope")) {
+    x = panelRect.x + panelRect.w * 0.58 - balloon.w / 2;
+    y = panelRect.y + panelRect.h * 0.38 - balloon.h / 2;
+  }
   if (hint.includes("eye")) y = panelRect.y + panelRect.h * 0.12;
   if (hint.includes("impact")) {
     x = panelRect.x + panelRect.w * 0.5 - balloon.w / 2;
@@ -1559,18 +1705,21 @@ function rectFromPlacementHint(panelRect, balloon, placement) {
 function makePlanBalloon(row, panelCount) {
   const panelRect = rectForPlanPanel(row.panel, panelCount);
   const preset = planPreset(row.type, row.text);
-  const widthBase = /sfx/i.test(row.type) ? 180 : /caption/i.test(row.type) ? 330 : 240;
+  const isSfx = /sfx/i.test(row.type);
+  const isCaption = /caption/i.test(row.type);
+  const isQuiet = /small|quiet/i.test(`${row.type} ${row.placement}`);
+  const widthBase = isSfx ? 300 : isCaption ? 330 : 240;
   const balloon = normalizeBalloon({
     id: id("balloon"),
     x: panelRect.x + 20,
     y: panelRect.y + 20,
-    w: clamp(widthBase + wordCount(row.text) * 4, 140, Math.min(390, panelRect.w - 24)),
-    h: /sfx/i.test(row.type) ? 82 : clamp(64 + wordCount(row.text) * 3, 66, Math.min(140, panelRect.h - 18)),
+    w: clamp(widthBase + wordCount(row.text) * (isSfx ? 8 : 4), isSfx ? 220 : 140, Math.min(isSfx ? 560 : 390, panelRect.w - 24)),
+    h: isSfx ? Math.min(124, panelRect.h - 18) : clamp((isQuiet ? 54 : 64) + wordCount(row.text) * 3, 66, Math.min(140, panelRect.h - 18)),
     text: row.text,
-    fontSize: /sfx/i.test(row.type) ? 42 : 23,
-    padding: /sfx/i.test(row.type) ? 4 : 17,
+    fontSize: isSfx ? 72 : isQuiet ? 21 : 23,
+    padding: isSfx ? 2 : isQuiet ? 14 : 17,
     radius: 26,
-    stroke: /sfx/i.test(row.type) ? 6 : 3,
+    stroke: isSfx ? 9 : 3,
     fill: "#fffdf4",
     strokeColor: "#171717",
     textColor: "#171717",
@@ -1840,7 +1989,7 @@ async function loadSample() {
 function projectData() {
   return {
     app: "Proto Calder Comic Studio",
-    version: 4,
+    version: 5,
     title: state.title,
     imageName: state.imageName,
     imageDataUrl: state.imageDataUrl,

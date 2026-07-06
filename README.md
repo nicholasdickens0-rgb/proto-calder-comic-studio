@@ -40,6 +40,8 @@ http://localhost:5177
 - Paste a lettering-plan Markdown table and let Studio Assistant create captions, balloons, SFX, and inferred panel guides.
 - Import lettering plans from Markdown tables, rendered copied tables, tab-separated rows, or plain panel rows.
 - Supports both `Panel | Type | Text | Placement` and `Panel | Lettering | Text` plan formats.
+- Uses weighted inferred panel guides for cinematic page layouts instead of equal stripes.
+- Gives imported SFX stronger impact lettering with burst backing, glow, and heavier outlines.
 - Watch Studio Assistant status while it works, with clear success and error messages.
 - Move and resize balloons/zones/guides.
 - Drag balloon tail points.
