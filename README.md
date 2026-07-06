@@ -36,6 +36,7 @@ http://localhost:5177
 - Tune bubble style, fill, stroke, text color, tail width, wobble, paper texture, and glow.
 - Add protected art zones for faces, hands, babies, runes, and key acting.
 - Add panel guides.
+- Use Studio Assistant to critique page flow, split dialogue, create tone-aware balloons, and auto-place selected balloons.
 - Move and resize balloons/zones/guides.
 - Drag balloon tail points.
 - Undo and redo page edits with buttons or keyboard shortcuts.

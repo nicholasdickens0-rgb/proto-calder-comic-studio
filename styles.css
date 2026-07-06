@@ -301,6 +301,46 @@ textarea {
   margin-bottom: 8px;
 }
 
+.assistant-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.assistant-actions button {
+  margin-bottom: 0;
+}
+
+.assistant-output {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.assistant-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  background: white;
+  padding: 9px;
+}
+
+.assistant-card.warn {
+  border-left-color: var(--warn);
+}
+
+.assistant-card strong {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.assistant-card small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .stage-wrap {
   min-width: 0;
   display: flex;

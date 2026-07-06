@@ -13,6 +13,13 @@ const ui = {
   addSafeBtn: document.getElementById("addSafeBtn"),
   addPanelBtn: document.getElementById("addPanelBtn"),
   deleteBtn: document.getElementById("deleteBtn"),
+  critiqueBtn: document.getElementById("critiqueBtn"),
+  splitDialogueBtn: document.getElementById("splitDialogueBtn"),
+  createBalloonsBtn: document.getElementById("createBalloonsBtn"),
+  autoPlaceBtn: document.getElementById("autoPlaceBtn"),
+  assistantInput: document.getElementById("assistantInput"),
+  assistantToneInput: document.getElementById("assistantToneInput"),
+  assistantOutput: document.getElementById("assistantOutput"),
   zoomRange: document.getElementById("zoomRange"),
   showSafeToggle: document.getElementById("showSafeToggle"),
   showPanelToggle: document.getElementById("showPanelToggle"),
@@ -59,6 +66,9 @@ const state = {
   balloons: [],
   safeZones: [],
   panels: [],
+  assistant: {
+    beats: []
+  },
   history: {
     undo: [],
     redo: [],
@@ -975,6 +985,12 @@ function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function overlapArea(a, b) {
+  const x = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const y = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return x * y;
+}
+
 function overlapWarnings() {
   const warnings = [];
   for (const balloon of state.balloons) {
@@ -1015,6 +1031,262 @@ function updateChecks() {
   density.className = "check-item";
   density.innerHTML = `<strong>${state.balloons.length} balloon${state.balloons.length === 1 ? "" : "s"}</strong><span>${state.safeZones.length} protected zone${state.safeZones.length === 1 ? "" : "s"}, ${state.panels.length} panel guide${state.panels.length === 1 ? "" : "s"}.</span>`;
   ui.checkList.appendChild(density);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function wordCount(text) {
+  return (text || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+function assistantCards(cards) {
+  ui.assistantOutput.innerHTML = "";
+  for (const card of cards) {
+    const el = document.createElement("div");
+    el.className = `assistant-card ${card.warn ? "warn" : ""}`;
+    el.innerHTML = `<strong>${escapeHtml(card.title)}</strong><small>${escapeHtml(card.body)}</small>`;
+    ui.assistantOutput.appendChild(el);
+  }
+}
+
+function pageCritique() {
+  const cards = [];
+  const warnings = overlapWarnings();
+  const totalWords = state.balloons.reduce((sum, balloon) => sum + wordCount(balloon.text), 0);
+  const longBalloons = state.balloons.filter((balloon) => wordCount(balloon.text) > 22);
+
+  if (!state.image) {
+    cards.push({ title: "Load Art", body: "Import the clean page image before final lettering.", warn: true });
+  }
+  if (!state.safeZones.length) {
+    cards.push({ title: "Protect Acting", body: "Mark faces, hands, babies, runes, and key action before placing dialogue.", warn: true });
+  }
+  if (warnings.length) {
+    cards.push({ title: "Clear The Art", body: `${warnings.length} balloon overlap protected art. Move or auto-place those balloons.`, warn: true });
+  }
+  if (longBalloons.length) {
+    cards.push({ title: "Split Heavy Lines", body: `${longBalloons.length} balloon has more than 22 words. Split it into smaller beats for better pacing.`, warn: true });
+  }
+  if (!state.panels.length) {
+    cards.push({ title: "Panel Guides", body: "Add panel guides when a page has several beats; the assistant can place balloons more intelligently inside them." });
+  }
+  if (state.balloons.length && totalWords / state.balloons.length < 5) {
+    cards.push({ title: "Sparse Dialogue", body: "The page has short lines. This may read cinematic; make sure the acting carries the emotion." });
+  }
+  if (state.balloons.length >= 6) {
+    cards.push({ title: "Reading Load", body: "This page has many balloons. Check that the eye path stays top-left to bottom-right." });
+  }
+  if (!cards.length) {
+    cards.push({ title: "Page Looks Ready", body: "No obvious lettering issues. Try exporting a PNG and reviewing it full-screen." });
+  }
+
+  assistantCards(cards);
+  setStatus("Assistant critique ready");
+}
+
+function splitDialogue(text) {
+  const cleaned = (text || "").replace(/\r/g, "").trim();
+  if (!cleaned) return [];
+  const lineBeats = cleaned
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const rawBeats = [];
+
+  for (const line of lineBeats) {
+    const parts = line.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [line];
+    for (const part of parts) {
+      const beat = part.trim();
+      if (beat) rawBeats.push(beat);
+    }
+  }
+
+  const beats = [];
+  for (const beat of rawBeats) {
+    const words = beat.split(/\s+/);
+    if (words.length <= 18) {
+      beats.push(beat);
+      continue;
+    }
+    for (let i = 0; i < words.length; i += 14) {
+      beats.push(words.slice(i, i + 14).join(" "));
+    }
+  }
+  return beats.slice(0, 12);
+}
+
+function assistantSplitDialogue() {
+  const selected = selectedObject();
+  const source = ui.assistantInput.value || (selected && selected.text) || "";
+  state.assistant.beats = splitDialogue(source);
+  if (!state.assistant.beats.length) {
+    assistantCards([{ title: "No Dialogue", body: "Paste dialogue or select a balloon with text first.", warn: true }]);
+    return;
+  }
+  assistantCards(state.assistant.beats.map((beat, index) => ({
+    title: `Beat ${index + 1}`,
+    body: beat
+  })));
+  setStatus(`${state.assistant.beats.length} dialogue beat${state.assistant.beats.length === 1 ? "" : "s"} split`);
+}
+
+function toneForText(text) {
+  const requested = ui.assistantToneInput.value;
+  if (requested && requested !== "auto") return requested;
+  const value = text.trim();
+  if (/rune|glow|magic|light|divine|vision/i.test(value)) return "magic";
+  if (/^\(.+\)$/.test(value) || /\.{2,}|whisper|hush|soft/i.test(value)) return "whisper";
+  if (/[!]{1,}|^[A-Z0-9\s,'"-]{8,}$/.test(value)) return "shout";
+  if (/thought|wondered|remembered|maybe|if only/i.test(value)) return "thought";
+  if (/^(caption|narration|meanwhile|later|before|after)\b/i.test(value)) return "caption";
+  return "classic";
+}
+
+function makeBalloon(text, index = 0, total = 1) {
+  const rect = pageRect();
+  const width = clamp(Math.round(rect.w * 0.3), 230, 360);
+  const balloon = normalizeBalloon({
+    id: id("balloon"),
+    x: Math.round(rect.w * 0.5 - width / 2),
+    y: Math.round(rect.h * (0.08 + index / Math.max(1, total) * 0.72)),
+    w: width,
+    h: clamp(72 + wordCount(text) * 3, 78, 150),
+    text,
+    fontSize: 24,
+    padding: 18,
+    radius: 28,
+    stroke: 3,
+    fill: "#fffdf4",
+    strokeColor: "#171717",
+    textColor: "#171717",
+    hasTail: true,
+    tailX: Math.round(rect.w * 0.52),
+    tailY: Math.round(rect.h * 0.2)
+  });
+  applyBubblePreset(balloon, toneForText(text), false);
+  return balloon;
+}
+
+function placementRegions() {
+  const rect = pageRect();
+  if (state.panels.length) {
+    return state.panels
+      .slice()
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+      .map((panel) => ({
+        x: panel.x + 12,
+        y: panel.y + 12,
+        w: Math.max(40, panel.w - 24),
+        h: Math.max(40, panel.h - 24)
+      }));
+  }
+  return [
+    { x: rect.w * 0.04, y: rect.h * 0.05, w: rect.w * 0.92, h: rect.h * 0.24 },
+    { x: rect.w * 0.04, y: rect.h * 0.36, w: rect.w * 0.92, h: rect.h * 0.24 },
+    { x: rect.w * 0.04, y: rect.h * 0.67, w: rect.w * 0.92, h: rect.h * 0.25 }
+  ];
+}
+
+function candidatePlacements(balloon, index, total) {
+  const rect = pageRect();
+  const regions = placementRegions();
+  const desiredIndex = Math.min(regions.length - 1, Math.floor(index / Math.max(1, total) * regions.length));
+  const candidates = [];
+
+  for (let regionIndex = 0; regionIndex < regions.length; regionIndex += 1) {
+    const region = regions[regionIndex];
+    const xs = [region.x, region.x + (region.w - balloon.w) / 2, region.x + region.w - balloon.w];
+    const ys = [region.y, region.y + (region.h - balloon.h) / 2, region.y + region.h - balloon.h];
+    for (const x of xs) {
+      for (const y of ys) {
+        candidates.push({
+          x: clamp(Math.round(x), 12, rect.w - balloon.w - 12),
+          y: clamp(Math.round(y), 12, rect.h - balloon.h - 12),
+          desiredPenalty: Math.abs(regionIndex - desiredIndex) * 600
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
+function placementScore(candidate, balloon, ignoreId = "") {
+  const rect = pageRect();
+  const test = { ...balloon, x: candidate.x, y: candidate.y };
+  let score = candidate.desiredPenalty || 0;
+  for (const safe of state.safeZones) score += overlapArea(test, safe) * 16;
+  for (const other of state.balloons) {
+    if (other.id !== ignoreId) score += overlapArea(test, other) * 8;
+  }
+  const margin = Math.min(test.x, test.y, rect.w - test.x - test.w, rect.h - test.y - test.h);
+  if (margin < 24) score += (24 - margin) * 30;
+  return score;
+}
+
+function placeBalloonSmart(balloon, index = 0, total = 1, ignoreId = balloon.id) {
+  const candidates = candidatePlacements(balloon, index, total);
+  if (!candidates.length) return false;
+  const best = candidates
+    .map((candidate) => ({ ...candidate, score: placementScore(candidate, balloon, ignoreId) }))
+    .sort((a, b) => a.score - b.score)[0];
+  balloon.x = best.x;
+  balloon.y = best.y;
+  if (balloon.hasTail) {
+    balloon.tailX = best.x + balloon.w / 2;
+    balloon.tailY = best.y + balloon.h + 44;
+  }
+  return true;
+}
+
+function assistantCreateBalloons() {
+  const beats = state.assistant.beats.length ? state.assistant.beats : splitDialogue(ui.assistantInput.value);
+  if (!beats.length) {
+    assistantCards([{ title: "No Dialogue", body: "Paste dialogue, then split or create balloons.", warn: true }]);
+    return;
+  }
+
+  pushHistory();
+  const created = [];
+  for (let i = 0; i < beats.length; i += 1) {
+    const balloon = makeBalloon(beats[i], i, beats.length);
+    placeBalloonSmart(balloon, i, beats.length);
+    state.balloons.push(balloon);
+    created.push(balloon);
+  }
+
+  const last = created[created.length - 1];
+  if (last) select("balloon", last.id);
+  render();
+  updateChecks();
+  assistantCards([
+    { title: "Balloons Created", body: `${created.length} balloon${created.length === 1 ? "" : "s"} added with tone-aware presets.` },
+    { title: "Review Placement", body: "Use protected-zone warnings and reading order to make final human choices." }
+  ]);
+  setStatus("Assistant created balloons");
+}
+
+function assistantAutoPlaceSelected() {
+  const obj = selectedObject();
+  if (!obj || state.selected.type !== "balloon") {
+    assistantCards([{ title: "Select A Balloon", body: "Choose a balloon, then place it with the assistant.", warn: true }]);
+    return;
+  }
+
+  pushHistory();
+  const ordered = state.balloons.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+  const index = Math.max(0, ordered.findIndex((balloon) => balloon.id === obj.id));
+  placeBalloonSmart(obj, index, Math.max(1, state.balloons.length), obj.id);
+  syncInspector();
+  render();
+  updateChecks();
+  assistantCards([{ title: "Placed Selected Balloon", body: "The assistant moved it to the lowest-conflict area it found." }]);
+  setStatus("Assistant placed selected balloon");
 }
 
 function resizeByHandle(obj, part, point) {
@@ -1192,11 +1464,16 @@ async function loadSample() {
 function projectData() {
   return {
     app: "Proto Calder Comic Studio",
-    version: 2,
+    version: 3,
     title: state.title,
     imageName: state.imageName,
     imageDataUrl: state.imageDataUrl,
-    notes: ui.notesInput.value,
+    notes: state.notes,
+    assistant: {
+      input: ui.assistantInput.value,
+      tone: ui.assistantToneInput.value,
+      beats: state.assistant.beats
+    },
     balloons: state.balloons,
     safeZones: state.safeZones,
     panels: state.panels
@@ -1219,6 +1496,9 @@ function loadProjectFile(file) {
       state.imageName = data.imageName || "";
       state.notes = data.notes || "";
       ui.notesInput.value = state.notes;
+      ui.assistantInput.value = data.assistant && data.assistant.input ? data.assistant.input : "";
+      ui.assistantToneInput.value = data.assistant && data.assistant.tone ? data.assistant.tone : "auto";
+      state.assistant.beats = data.assistant && Array.isArray(data.assistant.beats) ? data.assistant.beats : [];
       state.balloons = (data.balloons || []).map(normalizeBalloon);
       state.safeZones = data.safeZones || [];
       state.panels = data.panels || [];
@@ -1304,6 +1584,10 @@ ui.addBalloonBtn.addEventListener("click", addBalloon);
 ui.addSafeBtn.addEventListener("click", addSafeZone);
 ui.addPanelBtn.addEventListener("click", addPanelGuide);
 ui.deleteBtn.addEventListener("click", deleteSelected);
+ui.critiqueBtn.addEventListener("click", pageCritique);
+ui.splitDialogueBtn.addEventListener("click", assistantSplitDialogue);
+ui.createBalloonsBtn.addEventListener("click", assistantCreateBalloons);
+ui.autoPlaceBtn.addEventListener("click", assistantAutoPlaceSelected);
 ui.undoBtn.addEventListener("click", undo);
 ui.redoBtn.addEventListener("click", redo);
 ui.loadSampleBtn.addEventListener("click", loadSample);
