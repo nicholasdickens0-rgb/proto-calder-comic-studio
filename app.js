@@ -12,6 +12,7 @@ const ui = {
   addBalloonBtn: document.getElementById("addBalloonBtn"),
   addSafeBtn: document.getElementById("addSafeBtn"),
   addPanelBtn: document.getElementById("addPanelBtn"),
+  detectPanelsBtn: document.getElementById("detectPanelsBtn"),
   deleteBtn: document.getElementById("deleteBtn"),
   critiqueBtn: document.getElementById("critiqueBtn"),
   splitDialogueBtn: document.getElementById("splitDialogueBtn"),
@@ -240,7 +241,7 @@ function setStatus(text) {
 }
 
 function assistantButtons() {
-  return [ui.critiqueBtn, ui.splitDialogueBtn, ui.createBalloonsBtn, ui.autoPlaceBtn, ui.applyPlanBtn];
+  return [ui.critiqueBtn, ui.splitDialogueBtn, ui.createBalloonsBtn, ui.autoPlaceBtn, ui.applyPlanBtn, ui.detectPanelsBtn];
 }
 
 function setAssistantState(message, mode = "idle") {
@@ -1621,11 +1622,65 @@ function mergeRowGroups(groups, maxGap) {
     if (group.start - last.end <= maxGap) {
       last.end = group.end;
       last.height = last.end - last.start + 1;
+      last.score = Math.max(last.score || 0, group.score || 0);
     } else {
       merged.push({ ...group });
     }
   }
   return merged;
+}
+
+function scoreRowGroup(group, rowScores) {
+  let total = 0;
+  let count = 0;
+  for (let y = group.start; y <= group.end; y += 1) {
+    total += rowScores[y] || 0;
+    count += 1;
+  }
+  const average = count ? total / count : 0;
+  const heightBoost = Math.min(0.18, group.height * 0.018);
+  return average + heightBoost;
+}
+
+function panelRowsFromGutters(gutters, panelCount, minPanelH) {
+  let workingGutters = gutters.slice();
+
+  function rowsFromWorkingGutters() {
+    const rows = [];
+    for (let index = 0; index < workingGutters.length - 1; index += 1) {
+      const top = workingGutters[index].end + 1;
+      const bottom = workingGutters[index + 1].start - 1;
+      const height = bottom - top + 1;
+      if (height >= minPanelH) {
+        rows.push({
+          top,
+          bottom,
+          height,
+          beforeGutter: index,
+          afterGutter: index + 1
+        });
+      }
+    }
+    return rows;
+  }
+
+  let rows = rowsFromWorkingGutters();
+  while (rows.length > panelCount && workingGutters.length > 2) {
+    let weakestIndex = -1;
+    let weakestScore = Infinity;
+    for (let index = 1; index < workingGutters.length - 1; index += 1) {
+      const gutter = workingGutters[index];
+      if (gutter.score < weakestScore) {
+        weakestScore = gutter.score;
+        weakestIndex = index;
+      }
+    }
+    if (weakestIndex < 0) break;
+    workingGutters.splice(weakestIndex, 1);
+    rows = rowsFromWorkingGutters();
+  }
+
+  return rows.length === panelCount ? rows : [];
 }
 
 function detectedPanelRectsFromImage(panelCount) {
@@ -1660,6 +1715,7 @@ function detectedPanelRectsFromImage(panelCount) {
   const xEnd = Math.min(sampleW - 1, Math.ceil(sampleW * 0.992));
   const xStep = Math.max(1, Math.floor(sampleW / 360));
   const groups = [];
+  const rowScores = [];
   let start = -1;
   let end = -1;
 
@@ -1674,50 +1730,43 @@ function detectedPanelRectsFromImage(panelCount) {
     }
 
     const darkFraction = total ? dark / total : 0;
-    if (darkFraction >= 0.88) {
+    rowScores[y] = darkFraction;
+    if (darkFraction >= 0.76) {
       if (start < 0) start = y;
       end = y;
     } else if (start >= 0) {
-      groups.push({ start, end, height: end - start + 1 });
+      const group = { start, end, height: end - start + 1 };
+      group.score = scoreRowGroup(group, rowScores);
+      groups.push(group);
       start = -1;
       end = -1;
     }
   }
-  if (start >= 0) groups.push({ start, end, height: end - start + 1 });
+  if (start >= 0) {
+    const group = { start, end, height: end - start + 1 };
+    group.score = scoreRowGroup(group, rowScores);
+    groups.push(group);
+  }
 
   const maxGap = Math.max(1, Math.round(sampleH * 0.0015));
   const minGutterH = Math.max(2, Math.round(sampleH * 0.0025));
   const edgePad = Math.max(4, Math.round(sampleH * 0.012));
   let gutters = mergeRowGroups(groups, maxGap).filter((group) => (
-    group.height >= minGutterH ||
+    (group.height >= minGutterH && group.score >= 0.82) ||
     group.start <= edgePad ||
     group.end >= sampleH - edgePad
   ));
 
   if (!gutters.length || gutters[0].start > edgePad) {
-    gutters.unshift({ start: 0, end: 0, height: 1 });
+    gutters.unshift({ start: 0, end: 0, height: 1, score: 1 });
   }
   const lastGutter = gutters[gutters.length - 1];
   if (!lastGutter || lastGutter.end < sampleH - edgePad) {
-    gutters.push({ start: sampleH - 1, end: sampleH - 1, height: 1 });
+    gutters.push({ start: sampleH - 1, end: sampleH - 1, height: 1, score: 1 });
   }
 
   const minPanelH = Math.max(24, Math.round(sampleH * 0.055));
-  let rows = [];
-  for (let index = 0; index < gutters.length - 1; index += 1) {
-    const top = gutters[index].end + 1;
-    const bottom = gutters[index + 1].start - 1;
-    const height = bottom - top + 1;
-    if (height >= minPanelH) rows.push({ top, bottom, height });
-  }
-
-  if (rows.length > panelCount) {
-    rows = rows
-      .slice()
-      .sort((a, b) => b.height - a.height)
-      .slice(0, panelCount)
-      .sort((a, b) => a.top - b.top);
-  }
+  const rows = panelRowsFromGutters(gutters, panelCount, minPanelH);
   if (rows.length !== panelCount) return [];
 
   const scaleY = rect.h / sampleH;
@@ -1754,19 +1803,19 @@ function looksLikeLegacyPanelGuides(panelCount) {
 }
 
 function looksLikeGeneratedPanelGuides(panelCount) {
+  const rect = pageRect();
   return (
     state.panels.length === panelCount &&
     state.panels.every((panel, index) => (
-      panel.generatedByAssistant &&
-      (panel.label || "") === `Panel ${index + 1}`
+      panel.generatedByAssistant !== false &&
+      (panel.label || "") === `Panel ${index + 1}` &&
+      panel.x <= 18 &&
+      Math.abs(panel.w - (rect.w - 12)) <= 10
     ))
   );
 }
 
-function ensurePlanPanelGuides(panelCount) {
-  if (panelCount <= 1) return { method: "none", count: 0 };
-  if (looksLikeLegacyPanelGuides(panelCount) || looksLikeGeneratedPanelGuides(panelCount)) state.panels = [];
-  if (state.panels.length) return { method: "manual", count: state.panels.length };
+function createPlanPanelGuides(panelCount) {
   const detectedRects = detectedPanelRectsFromImage(panelCount);
   const method = detectedRects.length === panelCount ? "image-gutters" : "weighted-estimate";
   for (let panel = 1; panel <= panelCount; panel += 1) {
@@ -1783,6 +1832,41 @@ function ensurePlanPanelGuides(panelCount) {
     });
   }
   return { method, count: panelCount };
+}
+
+function ensurePlanPanelGuides(panelCount) {
+  if (panelCount <= 1) return { method: "none", count: 0 };
+  if (looksLikeLegacyPanelGuides(panelCount) || looksLikeGeneratedPanelGuides(panelCount)) state.panels = [];
+  if (state.panels.length) return { method: "manual", count: state.panels.length };
+  return createPlanPanelGuides(panelCount);
+}
+
+function guessedPanelCount() {
+  const rows = parseLetteringPlan(ui.assistantInput.value);
+  if (rows.length) return Math.max(...rows.map((row) => row.panel));
+  if (state.panels.length) return state.panels.length;
+  return 5;
+}
+
+function detectPanelGuides() {
+  if (!state.image) {
+    assistantCards([{ title: "No Page Image", body: "Import a page image before detecting panel guides.", warn: true }]);
+    setStatus("Import a page image first");
+    return;
+  }
+  const panelCount = guessedPanelCount();
+  pushHistory();
+  state.panels = [];
+  const result = createPlanPanelGuides(panelCount);
+  select("panel", state.panels[0] && state.panels[0].id);
+  render();
+  updateChecks();
+  assistantCards([
+    { title: "Panel Guides Rebuilt", body: `${panelCount} panel guide${panelCount === 1 ? "" : "s"} created.` },
+    { title: "Detection Method", body: result.method === "image-gutters" ? "Used gutter strength and weak-seam merging from the page art." : "Used weighted estimates because the page gutters were not clear enough." },
+    { title: "Next", body: "Apply the lettering plan again after the guides line up with the artwork." }
+  ]);
+  setStatus("Panel guides detected");
 }
 
 function rectForPlanPanel(panelNumber, panelCount) {
@@ -2127,7 +2211,7 @@ async function loadSample() {
 function projectData() {
   return {
     app: "Proto Calder Comic Studio",
-    version: 6,
+    version: 7,
     title: state.title,
     imageName: state.imageName,
     imageDataUrl: state.imageDataUrl,
@@ -2246,6 +2330,7 @@ ui.tools.forEach((button) => button.addEventListener("click", () => setTool(butt
 ui.addBalloonBtn.addEventListener("click", addBalloon);
 ui.addSafeBtn.addEventListener("click", addSafeZone);
 ui.addPanelBtn.addEventListener("click", addPanelGuide);
+ui.detectPanelsBtn.addEventListener("click", () => runAssistantAction("Detecting panel guides", detectPanelGuides, "Panel guides detected"));
 ui.deleteBtn.addEventListener("click", deleteSelected);
 ui.critiqueBtn.addEventListener("click", () => runAssistantAction("Critiquing page", pageCritique, "Critique ready"));
 ui.splitDialogueBtn.addEventListener("click", () => runAssistantAction("Splitting dialogue", assistantSplitDialogue));
