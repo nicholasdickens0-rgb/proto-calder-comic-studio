@@ -17,6 +17,7 @@ const ui = {
   splitDialogueBtn: document.getElementById("splitDialogueBtn"),
   createBalloonsBtn: document.getElementById("createBalloonsBtn"),
   autoPlaceBtn: document.getElementById("autoPlaceBtn"),
+  applyPlanBtn: document.getElementById("applyPlanBtn"),
   assistantInput: document.getElementById("assistantInput"),
   assistantToneInput: document.getElementById("assistantToneInput"),
   assistantOutput: document.getElementById("assistantOutput"),
@@ -194,6 +195,21 @@ const bubblePresets = {
     texture: 18,
     glow: 0,
     fillOpacity: 0.98
+  },
+  sfx: {
+    style: "sfx",
+    fill: "#ffffff",
+    strokeColor: "#101010",
+    textColor: "#fff4d0",
+    radius: 0,
+    stroke: 5,
+    padding: 6,
+    hasTail: false,
+    tailWidth: 4,
+    wobble: 0,
+    texture: 0,
+    glow: 10,
+    fillOpacity: 0
   },
   magic: {
     style: "magic",
@@ -585,8 +601,54 @@ function fitBalloonText(context, balloon) {
   return { size: 12, lines: wrapText(context, balloon.text, maxW), lineHeight: 14.5 };
 }
 
+function drawSfxText(context, balloon, scale = 1, selected = false, exportMode = false) {
+  const x = balloon.x * scale;
+  const y = balloon.y * scale;
+  const w = balloon.w * scale;
+  const h = balloon.h * scale;
+  const working = {
+    ...balloon,
+    x,
+    y,
+    w,
+    h,
+    padding: balloon.padding * scale,
+    fontSize: balloon.fontSize * scale
+  };
+  const fit = fitBalloonText(context, working);
+
+  context.save();
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.font = `900 ${fit.size}px "Impact", "Arial Black", "Segoe UI", sans-serif`;
+  context.strokeStyle = balloon.strokeColor || "#111111";
+  context.fillStyle = balloon.textColor || "#fff4d0";
+  context.lineWidth = Math.max(3, balloon.stroke * scale);
+  if (balloon.glow > 0) {
+    context.shadowColor = "rgba(255, 238, 160, 0.65)";
+    context.shadowBlur = Number(balloon.glow) * scale;
+  }
+
+  const totalH = fit.lines.length * fit.lineHeight;
+  let lineY = y + h / 2 - totalH / 2 + fit.lineHeight / 2;
+  for (const line of fit.lines) {
+    context.strokeText(line, x + w / 2, lineY);
+    context.fillText(line, x + w / 2, lineY);
+    lineY += fit.lineHeight;
+  }
+
+  if (selected && !exportMode) drawSelection(context, balloon, scale, "#2f6f67");
+  context.restore();
+}
+
 function drawBalloon(context, balloon, scale = 1, selected = false, exportMode = false) {
   normalizeBalloon(balloon);
+  if (balloon.style === "sfx") {
+    drawSfxText(context, balloon, scale, selected, exportMode);
+    return;
+  }
   const x = balloon.x * scale;
   const y = balloon.y * scale;
   const w = balloon.w * scale;
@@ -1141,6 +1203,7 @@ function toneForText(text) {
   if (requested && requested !== "auto") return requested;
   const value = text.trim();
   if (/rune|glow|magic|light|divine|vision/i.test(value)) return "magic";
+  if (/^(sfx|kra|boom|crack|snap|thoom|wham|clang|krak|kra-koom)/i.test(value)) return "sfx";
   if (/^\(.+\)$/.test(value) || /\.{2,}|whisper|hush|soft/i.test(value)) return "whisper";
   if (/[!]{1,}|^[A-Z0-9\s,'"-]{8,}$/.test(value)) return "shout";
   if (/thought|wondered|remembered|maybe|if only/i.test(value)) return "thought";
@@ -1242,6 +1305,157 @@ function placeBalloonSmart(balloon, index = 0, total = 1, ignoreId = balloon.id)
     balloon.tailY = best.y + balloon.h + 44;
   }
   return true;
+}
+
+function cleanPlanText(text) {
+  return (text || "")
+    .trim()
+    .replace(/^["“”]+|["“”]+$/g, "")
+    .replace(/^None$/i, "")
+    .trim();
+}
+
+function parseLetteringPlan(text) {
+  const rows = [];
+  const lines = (text || "").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|")) continue;
+    if (/^\|\s*-+/.test(trimmed) || /panel\s*\|\s*type/i.test(trimmed)) continue;
+    const cells = trimmed
+      .split("|")
+      .slice(1, -1)
+      .map((cell) => cell.trim());
+    if (cells.length < 4) continue;
+    const panel = Number.parseInt(cells[0], 10);
+    const type = cells[1] || "";
+    const planText = cleanPlanText(cells[2] || "");
+    const placement = cells[3] || "";
+    if (!Number.isFinite(panel) || !planText || /^none$/i.test(type)) continue;
+    rows.push({ panel, type, text: planText, placement });
+  }
+  return rows;
+}
+
+function inferredPanelRect(panelNumber, panelCount) {
+  const rect = pageRect();
+  const gutters = 8;
+  const panelH = (rect.h - gutters * (panelCount - 1)) / panelCount;
+  return {
+    x: 0,
+    y: Math.round((panelNumber - 1) * (panelH + gutters)),
+    w: rect.w,
+    h: Math.round(panelH)
+  };
+}
+
+function ensurePlanPanelGuides(panelCount) {
+  if (state.panels.length || panelCount <= 1) return;
+  for (let panel = 1; panel <= panelCount; panel += 1) {
+    const rect = inferredPanelRect(panel, panelCount);
+    state.panels.push({
+      id: id("panel"),
+      label: `Panel ${panel}`,
+      x: rect.x + 6,
+      y: rect.y + 6,
+      w: rect.w - 12,
+      h: rect.h - 12
+    });
+  }
+}
+
+function rectForPlanPanel(panelNumber, panelCount) {
+  const panels = state.panels.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+  if (panels[panelNumber - 1]) return panels[panelNumber - 1];
+  return inferredPanelRect(panelNumber, panelCount);
+}
+
+function planPreset(type, text) {
+  if (/sfx/i.test(type)) return "sfx";
+  if (/caption/i.test(type)) return "caption";
+  if (/dark/i.test(type)) return "magic";
+  return toneForText(text);
+}
+
+function rectFromPlacementHint(panelRect, balloon, placement) {
+  const hint = (placement || "").toLowerCase();
+  let x = panelRect.x + panelRect.w * 0.5 - balloon.w / 2;
+  let y = panelRect.y + panelRect.h * 0.5 - balloon.h / 2;
+
+  if (hint.includes("left")) x = panelRect.x + panelRect.w * 0.06;
+  if (hint.includes("right")) x = panelRect.x + panelRect.w - balloon.w - panelRect.w * 0.06;
+  if (hint.includes("center")) x = panelRect.x + panelRect.w * 0.5 - balloon.w / 2;
+  if (hint.includes("upper") || hint.includes("top") || hint.includes("sky")) y = panelRect.y + panelRect.h * 0.08;
+  if (hint.includes("lower") || hint.includes("bottom")) y = panelRect.y + panelRect.h - balloon.h - panelRect.h * 0.08;
+  if (hint.includes("window")) y = panelRect.y + panelRect.h * 0.22;
+  if (hint.includes("rope")) y = panelRect.y + panelRect.h * 0.35;
+  if (hint.includes("eye")) y = panelRect.y + panelRect.h * 0.12;
+  if (hint.includes("impact")) {
+    x = panelRect.x + panelRect.w * 0.5 - balloon.w / 2;
+    y = panelRect.y + panelRect.h * 0.5 - balloon.h / 2;
+  }
+
+  return {
+    x: clamp(Math.round(x), 12, pageRect().w - balloon.w - 12),
+    y: clamp(Math.round(y), 12, pageRect().h - balloon.h - 12)
+  };
+}
+
+function makePlanBalloon(row, panelCount) {
+  const panelRect = rectForPlanPanel(row.panel, panelCount);
+  const preset = planPreset(row.type, row.text);
+  const widthBase = /sfx/i.test(row.type) ? 180 : /caption/i.test(row.type) ? 330 : 240;
+  const balloon = normalizeBalloon({
+    id: id("balloon"),
+    x: panelRect.x + 20,
+    y: panelRect.y + 20,
+    w: clamp(widthBase + wordCount(row.text) * 4, 140, Math.min(390, panelRect.w - 24)),
+    h: /sfx/i.test(row.type) ? 82 : clamp(64 + wordCount(row.text) * 3, 66, Math.min(140, panelRect.h - 18)),
+    text: row.text,
+    fontSize: /sfx/i.test(row.type) ? 42 : 23,
+    padding: /sfx/i.test(row.type) ? 4 : 17,
+    radius: 26,
+    stroke: /sfx/i.test(row.type) ? 6 : 3,
+    fill: "#fffdf4",
+    strokeColor: "#171717",
+    textColor: "#171717",
+    hasTail: !/caption|sfx/i.test(row.type),
+    tailX: panelRect.x + panelRect.w / 2,
+    tailY: panelRect.y + panelRect.h / 2
+  });
+  applyBubblePreset(balloon, preset, false);
+  const position = rectFromPlacementHint(panelRect, balloon, row.placement);
+  balloon.x = position.x;
+  balloon.y = position.y;
+  if (balloon.hasTail) {
+    balloon.tailX = panelRect.x + panelRect.w / 2;
+    balloon.tailY = panelRect.y + panelRect.h * 0.55;
+  }
+  return balloon;
+}
+
+function assistantApplyPlan() {
+  const rows = parseLetteringPlan(ui.assistantInput.value);
+  if (!rows.length) {
+    assistantCards([{ title: "No Plan Rows Found", body: "Paste a lettering-plan Markdown table with Panel, Type, Text, and Placement columns.", warn: true }]);
+    return;
+  }
+
+  pushHistory();
+  const panelCount = Math.max(...rows.map((row) => row.panel));
+  ensurePlanPanelGuides(panelCount);
+  const created = rows.map((row) => makePlanBalloon(row, panelCount));
+  state.balloons.push(...created);
+  const last = created[created.length - 1];
+  if (last) select("balloon", last.id);
+  render();
+  updateChecks();
+  assistantCards([
+    { title: "Plan Applied", body: `${created.length} editable lettering object${created.length === 1 ? "" : "s"} created from the plan.` },
+    { title: "Panel Guides", body: state.panels.length ? "Panel guides are active. Adjust them first if a band does not match the art exactly." : "Add panel guides for more accurate future placement." },
+    { title: "Human Pass", body: "Now drag tails, protect key art, and run Critique for overlap and pacing checks." }
+  ]);
+  setStatus("Assistant applied lettering plan");
 }
 
 function assistantCreateBalloons() {
@@ -1464,7 +1678,7 @@ async function loadSample() {
 function projectData() {
   return {
     app: "Proto Calder Comic Studio",
-    version: 3,
+    version: 4,
     title: state.title,
     imageName: state.imageName,
     imageDataUrl: state.imageDataUrl,
@@ -1588,6 +1802,7 @@ ui.critiqueBtn.addEventListener("click", pageCritique);
 ui.splitDialogueBtn.addEventListener("click", assistantSplitDialogue);
 ui.createBalloonsBtn.addEventListener("click", assistantCreateBalloons);
 ui.autoPlaceBtn.addEventListener("click", assistantAutoPlaceSelected);
+ui.applyPlanBtn.addEventListener("click", assistantApplyPlan);
 ui.undoBtn.addEventListener("click", undo);
 ui.redoBtn.addEventListener("click", redo);
 ui.loadSampleBtn.addEventListener("click", loadSample);

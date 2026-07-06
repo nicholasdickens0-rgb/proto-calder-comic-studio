@@ -37,6 +37,7 @@ http://localhost:5177
 - Add protected art zones for faces, hands, babies, runes, and key acting.
 - Add panel guides.
 - Use Studio Assistant to critique page flow, split dialogue, create tone-aware balloons, and auto-place selected balloons.
+- Paste a lettering-plan Markdown table and let Studio Assistant create captions, balloons, SFX, and inferred panel guides.
 - Move and resize balloons/zones/guides.
 - Drag balloon tail points.
 - Undo and redo page edits with buttons or keyboard shortcuts.
