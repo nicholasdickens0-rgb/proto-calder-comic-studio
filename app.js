@@ -2728,3 +2728,349 @@ render();
 updateChecks();
 updateHistoryControls();
 setTool("select");
+
+// ---------------------------------------------------------------------------
+// Script Generator - mimics the ai-comic-creator skill: turns a pasted
+// manuscript into a panel-by-panel script, AI image prompts for every panel,
+// and character reference sheet prompts, using the user's own Claude API key.
+// ---------------------------------------------------------------------------
+
+const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const SG_API_KEY_STORAGE = "pccs_claude_api_key";
+
+const sgUi = {
+  openBtn: document.getElementById("scriptGenBtn"),
+  modal: document.getElementById("scriptGenModal"),
+  closeBtn: document.getElementById("scriptGenCloseBtn"),
+  manuscriptInput: document.getElementById("sgManuscriptInput"),
+  artStyleInput: document.getElementById("sgArtStyleInput"),
+  readingDirectionField: document.getElementById("sgReadingDirectionField"),
+  readingDirectionInput: document.getElementById("sgReadingDirectionInput"),
+  scopeInput: document.getElementById("sgScopeInput"),
+  audienceInput: document.getElementById("sgAudienceInput"),
+  toneInput: document.getElementById("sgToneInput"),
+  trackerToggle: document.getElementById("sgTrackerToggle"),
+  apiKeyInput: document.getElementById("sgApiKeyInput"),
+  modelInput: document.getElementById("sgModelInput"),
+  generateBtn: document.getElementById("sgGenerateBtn"),
+  status: document.getElementById("sgStatus"),
+  statusText: document.getElementById("sgStatusText"),
+  tabs: Array.from(document.querySelectorAll(".sg-tab")),
+  panels: {
+    script: document.getElementById("sgPanelScript"),
+    prompts: document.getElementById("sgPanelPrompts"),
+    characters: document.getElementById("sgPanelCharacters"),
+    tracker: document.getElementById("sgPanelTracker")
+  },
+  copyBtn: document.getElementById("sgCopyBtn"),
+  downloadBtn: document.getElementById("sgDownloadBtn")
+};
+
+state.scriptGen = {
+  busy: false,
+  activeTab: "script",
+  results: { script: "", prompts: "", characters: "", tracker: "" }
+};
+
+const COMIC_SCRIPT_SYSTEM_PROMPT = [
+  "You are an expert comic book writer and AI-art prompt engineer. You convert prose manuscripts into production-ready comic packages: a panel-by-panel script, AI image generation prompts for every panel, and character reference sheet prompts.",
+  "",
+  "SCRIPT FORMAT (always follow this exactly):",
+  "PAGE [NUMBER] ([X] PANELS)",
+  "",
+  "PANEL [NUMBER] [ID: P[page]-[panel], e.g. P03-02]",
+  "[Visual description of what the artist draws - action, setting, characters, positions, expressions, camera angle]",
+  "[ARTIST NOTE: any special guidance, only when needed]",
+  "CHARACTER NAME: \"dialogue\"",
+  "CAPTION: \"narration text\"",
+  "SFX: SOUND EFFECT",
+  "",
+  "Every page is explicitly numbered. Every panel is numbered within the page and given an ID like P03-02 (page 3, panel 2) - this ID must be reused identically in the image prompts section so the two stay linked.",
+  "",
+  "SCRIPT PRINCIPLES:",
+  "- Show, don't tell: translate internal or narrated description into visual, filmable panel descriptions.",
+  "- Vary panel size for pacing: big moments get big panels or splash pages; dialogue gets smaller panels.",
+  "- Name the camera in every panel: WIDE SHOT, CLOSE-UP, EXTREME CLOSE-UP, BIRD'S EYE VIEW, LOW ANGLE, OVER THE SHOULDER, TWO SHOT, etc.",
+  "- Limit dialogue to 2-3 lines per panel.",
+  "- Use splash pages for the title page, the first reveal of a major character or creature, and the cliffhanger.",
+  "- Vary panel transitions deliberately: action-to-action (fights, fast movement), moment-to-moment (suspense, a breath), subject-to-subject (dialogue cuts, reaction shots), scene-to-scene (time or location jumps), aspect-to-aspect (worldbuilding, calm establishing pages). Mixing these controls the page's rhythm.",
+  "",
+  "AI IMAGE PROMPT FORMULA (use for every panel prompt):",
+  "[STYLE TAG], [SHOT TYPE], [SCENE/ACTION], [CHARACTERS with consistent visual tags], [SETTING DETAILS], [MOOD/LIGHTING], [QUALITY TAGS], then a negative prompt line, then parameters.",
+  "",
+  "STYLE TAGS BY ART STYLE:",
+  "Manga (black & white): 'manga panel, black and white ink, detailed linework, professional manga art, clean lines, expressive faces, manga screentone shading, dynamic composition' with parameters '--ar 3:4 --style raw --v 6'.",
+  "Western comic (full color): 'comic book art, full color, cel shading, bold outlines, dynamic illustration, Marvel Comics style, vibrant colors, detailed backgrounds' with parameters '--ar 2:3 --style raw --v 6'.",
+  "Webtoon (vertical, full color): 'webtoon art style, full color, clean digital art, bright palette, K-webtoon style, smooth linework, expressive characters, soft shading' with parameters '--ar 9:16 --v 6'.",
+  "",
+  "SHOT TYPE KEYWORDS: wide establishing shot, medium shot, medium close-up, close-up portrait, extreme close-up, bird's eye view/top-down angle, low angle looking up, over-the-shoulder shot, two-shot face to face, full body shot, panoramic wide shot.",
+  "",
+  "MOOD/LIGHTING KEYWORDS: dramatic (dramatic side lighting, harsh shadows, high contrast, ominous atmosphere); action/battle (dynamic motion blur, speed lines, explosive energy, impact shockwave, dust and debris); peaceful/warm (soft golden hour light, warm tones, gentle shadows, serene atmosphere); horror/dread (cold blue-green lighting, deep shadows, eerie mist, unsettling stillness); epic/divine (godlike scale, radiant light beams, awe-inspiring, monumental composition); emotional/intimate (soft diffused light, quiet moment, gentle warmth, close and personal).",
+  "",
+  "CHARACTER VISUAL TAGS: for every named character, write a short consistent tag the first time they appear in full - '[NAME] ([age/build], [skin tone], [hair: color+style], [eyes], [clothing])' - and reuse that exact tag (or a shortened but consistent version) every time the character appears in later prompts. AI art drifts across many panels unless the same words are repeated.",
+  "",
+  "NEGATIVE PROMPTS BY STYLE (append to every prompt):",
+  "Manga: '--no color, watermark, blurry, low quality, extra limbs, deformed anatomy, bad hands, extra fingers, duplicate, ugly, text overlay, realistic photo, 3D render, western comic style'.",
+  "Western comic: '--no watermark, blurry, low quality, extra limbs, deformed, bad hands, realistic photo, manga style, anime, sketch, unfinished'.",
+  "Webtoon: '--no watermark, blurry, low quality, extra limbs, deformed, bad hands, sketchy lines, unfinished, dark colors, heavy shadows'.",
+  "",
+  "CHARACTER REFERENCE SHEET PROMPT FORMAT:",
+  "CHARACTER: [NAME]",
+  "REFERENCE PROMPT: character reference sheet, [character name], [detailed physical description], [clothing/armor], [defining visual features], [art style tags], front view and 3/4 view, expression sheet (happy/sad/angry/surprised/determined/neutral), clean white background, labeled poses, [quality tags], then the style's parameters.",
+  "NEVER CHANGE: the 2-4 most identity-defining visual traits for this character (e.g. a scar, a signature weapon, a hair color) - repeat these exact words in every panel prompt where the character appears, since that is what keeps them recognizable across many AI-generated panels.",
+  "",
+  "Always write in plain text only. Do not use markdown headers, bold, or code fences anywhere in your output unless a specific instruction asks for a markdown table."
+].join("\n");
+
+function sgArtStyleLabel(style) {
+  if (style === "manga") return "Manga (black and white)";
+  if (style === "webtoon") return "Webtoon (vertical scroll, full color)";
+  return "Western comic (full color)";
+}
+
+function sgScopeLabel(scope) {
+  if (scope === "opening") return "just the opening (first 1-3 chapters)";
+  if (scope === "full-issue") return "a full standard issue (22-24 pages / 18-24 manga pages / 30-60 webtoon panels)";
+  return "whatever scope best fits the provided manuscript text";
+}
+
+function sgConfigSummary(config) {
+  const lines = [
+    `Art style: ${sgArtStyleLabel(config.artStyle)}`,
+    config.artStyle === "manga"
+      ? `Reading direction: ${config.readingDirection === "rtl" ? "right-to-left (traditional manga)" : "left-to-right"}`
+      : null,
+    `Scope: ${sgScopeLabel(config.scope)}`,
+    `Audience: ${config.audience}`,
+    config.tone ? `Tone reference: ${config.tone}` : null
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function sgReadCurrentConfig() {
+  return {
+    artStyle: sgUi.artStyleInput.value,
+    readingDirection: sgUi.readingDirectionInput.value,
+    scope: sgUi.scopeInput.value,
+    audience: sgUi.audienceInput.value,
+    tone: sgUi.toneInput.value.trim(),
+    tracker: sgUi.trackerToggle.checked
+  };
+}
+
+function sgBuildPlanPrompt(manuscript, config) {
+  return [
+    "STEP 1 - Read the manuscript below and plan a comic adaptation.",
+    "",
+    "PRODUCTION SETTINGS:",
+    sgConfigSummary(config),
+    "",
+    "Extract and summarize (be concise but specific):",
+    "- Characters: name, physical description, personality, clothing, unique visual traits",
+    "- World/setting: time period, architecture, technology, color/mood palette",
+    "- Tone: overall mood",
+    "- Magic/powers/special abilities and how they look visually, if any",
+    "- The strongest possible opening hook moment",
+    "- Key scenes worth adapting, in story order",
+    "",
+    "Then propose a page-by-page (or panel-count, for webtoon) breakdown mapping which story beats land on which pages, matching the requested scope. Keep this plan concise - it is an internal outline, not the final script.",
+    "",
+    "MANUSCRIPT:",
+    manuscript
+  ].join("\n");
+}
+
+function sgBuildScriptPrompt(plan, config) {
+  return [
+    "STEP 2 - Using the outline below, write the full panel-by-panel comic script.",
+    "",
+    "PRODUCTION SETTINGS:",
+    sgConfigSummary(config),
+    "",
+    "Follow the SCRIPT FORMAT and SCRIPT PRINCIPLES exactly as defined in your instructions. Give every panel an ID (P[page]-[panel]). Vary panel transitions deliberately. Output ONLY the script text, starting at PAGE 1.",
+    "",
+    "OUTLINE:",
+    plan
+  ].join("\n");
+}
+
+function sgBuildImagePromptsPrompt(script, config) {
+  return [
+    "STEP 3 - Using the finished script below, write an AI image generation prompt for every single panel.",
+    "",
+    "PRODUCTION SETTINGS:",
+    sgConfigSummary(config),
+    "",
+    "Follow the AI IMAGE PROMPT FORMULA, STYLE TAGS, SHOT TYPE KEYWORDS, MOOD/LIGHTING KEYWORDS, CHARACTER VISUAL TAGS, and NEGATIVE PROMPTS BY STYLE exactly as defined in your instructions, matched to the chosen art style. Reuse each panel's exact ID from the script. Organize output by page, formatted like:",
+    "PAGE 1 - PANEL 1 [ID: P01-01]",
+    "[full prompt]",
+    "[negative prompt line]",
+    "",
+    "Output ONLY the prompts, no extra commentary.",
+    "",
+    "SCRIPT:",
+    script
+  ].join("\n");
+}
+
+function sgBuildCharacterPrompt(script, config) {
+  return [
+    "STEP 4 - Using the script below, identify every named character who appears more than once and write a character reference sheet prompt for each.",
+    "",
+    "PRODUCTION SETTINGS:",
+    sgConfigSummary(config),
+    "",
+    "Follow the CHARACTER REFERENCE SHEET PROMPT FORMAT exactly as defined in your instructions, matched to the chosen art style's tags and parameters. Output one entry per character, in the CHARACTER / REFERENCE PROMPT / NEVER CHANGE format. Output ONLY the character sheets, no extra commentary.",
+    "",
+    "SCRIPT:",
+    script
+  ].join("\n");
+}
+
+function sgBuildTrackerFromScript(script) {
+  const rows = [];
+  let currentPage = "";
+  script.split("\n").forEach((line) => {
+    const pageMatch = line.match(/PAGE\s+(\d+)/i);
+    if (pageMatch) currentPage = pageMatch[1];
+    const panelMatch = line.match(/PANEL\s+\d+\s*\[ID:\s*([A-Za-z0-9-]+)\]/i);
+    if (panelMatch) rows.push({ id: panelMatch[1], page: currentPage });
+  });
+  if (!rows.length) return "";
+  const header = "| Panel ID | Page | Status | Notes |\n| --- | --- | --- | --- |";
+  const body = rows.map((row) => `| ${row.id} | ${row.page} | Not started | |`).join("\n");
+  return `${header}\n${body}`;
+}
+
+async function callClaude(apiKey, model, system, userText, maxTokens) {
+  const response = await fetch(CLAUDE_API_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userText }]
+    })
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Claude API error (${response.status}): ${errorBody.slice(0, 300)}`);
+  }
+  const data = await response.json();
+  return (data.content || []).map((block) => block.text || "").join("\n").trim();
+}
+
+function setSgStatus(message, mode = "idle") {
+  sgUi.statusText.textContent = message;
+  sgUi.status.classList.toggle("busy", mode === "busy");
+  sgUi.status.classList.toggle("error", mode === "error");
+}
+
+function setSgBusy(isBusy, message = "") {
+  state.scriptGen.busy = isBusy;
+  sgUi.generateBtn.disabled = isBusy;
+  if (message) setSgStatus(message, isBusy ? "busy" : "idle");
+}
+
+function renderSgResults() {
+  const results = state.scriptGen.results;
+  sgUi.panels.script.textContent = results.script;
+  sgUi.panels.prompts.textContent = results.prompts;
+  sgUi.panels.characters.textContent = results.characters;
+  sgUi.panels.tracker.textContent = results.tracker;
+}
+
+async function runScriptGenerator() {
+  if (state.scriptGen.busy) return;
+  const manuscript = sgUi.manuscriptInput.value.trim();
+  const apiKey = sgUi.apiKeyInput.value.trim();
+  if (!manuscript) {
+    setSgStatus("Paste manuscript text first", "error");
+    return;
+  }
+  if (!apiKey) {
+    setSgStatus("Enter your Claude API key first", "error");
+    return;
+  }
+
+  localStorage.setItem(SG_API_KEY_STORAGE, apiKey);
+  const config = sgReadCurrentConfig();
+  const model = sgUi.modelInput.value;
+
+  try {
+    setSgBusy(true, "Step 1/4: Reading manuscript and planning...");
+    const plan = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildPlanPrompt(manuscript, config), 4000);
+
+    setSgBusy(true, "Step 2/4: Writing full script...");
+    const script = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildScriptPrompt(plan, config), 8000);
+
+    setSgBusy(true, "Step 3/4: Generating AI image prompts...");
+    const prompts = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildImagePromptsPrompt(script, config), 8000);
+
+    setSgBusy(true, "Step 4/4: Building character reference sheets...");
+    const characters = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildCharacterPrompt(script, config), 4000);
+
+    const tracker = config.tracker ? sgBuildTrackerFromScript(script) : "";
+
+    state.scriptGen.results = { script, prompts, characters, tracker };
+    renderSgResults();
+    setSgBusy(false, "Comic package ready");
+  } catch (error) {
+    setSgBusy(false);
+    setSgStatus((error && error.message) || "Generation failed", "error");
+  }
+}
+
+sgUi.apiKeyInput.value = localStorage.getItem(SG_API_KEY_STORAGE) || "";
+sgUi.apiKeyInput.addEventListener("change", () => {
+  localStorage.setItem(SG_API_KEY_STORAGE, sgUi.apiKeyInput.value.trim());
+});
+
+sgUi.openBtn.addEventListener("click", () => sgUi.modal.classList.remove("hidden"));
+sgUi.closeBtn.addEventListener("click", () => sgUi.modal.classList.add("hidden"));
+sgUi.modal.addEventListener("click", (event) => {
+  if (event.target === sgUi.modal) sgUi.modal.classList.add("hidden");
+});
+
+sgUi.artStyleInput.addEventListener("change", () => {
+  sgUi.readingDirectionField.classList.toggle("hidden", sgUi.artStyleInput.value !== "manga");
+});
+
+sgUi.tabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    sgUi.tabs.forEach((t) => t.classList.toggle("active", t === tab));
+    Object.entries(sgUi.panels).forEach(([key, el]) => el.classList.toggle("active", key === tab.dataset.sgTab));
+    state.scriptGen.activeTab = tab.dataset.sgTab;
+  });
+});
+
+sgUi.copyBtn.addEventListener("click", async () => {
+  const text = state.scriptGen.results[state.scriptGen.activeTab] || "";
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  setSgStatus("Copied to clipboard");
+});
+
+sgUi.downloadBtn.addEventListener("click", () => {
+  const r = state.scriptGen.results;
+  if (!r.script && !r.prompts && !r.characters) {
+    setSgStatus("Nothing to download yet", "error");
+    return;
+  }
+  const sections = [
+    "# Comic Script", "", r.script, "",
+    "# AI Image Prompts", "", r.prompts, "",
+    "# Character Reference Prompts", "", r.characters
+  ];
+  if (r.tracker) sections.push("", "# Panel Tracker", "", r.tracker);
+  const blob = new Blob([sections.join("\n")], { type: "text/markdown" });
+  downloadBlob(blob, `${safeFileName(state.title || "comic")}_script_package.md`);
+});
+
+sgUi.generateBtn.addEventListener("click", runScriptGenerator);

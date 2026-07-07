@@ -484,6 +484,157 @@ canvas {
   }
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 18, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 50;
+}
+
+.modal-backdrop.hidden {
+  display: none;
+}
+
+.modal {
+  background: var(--panel);
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 60px rgba(15, 17, 13, 0.4);
+  width: min(1080px, 100%);
+  max-height: min(880px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfaf5;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+  text-transform: none;
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+.icon-btn {
+  min-height: 32px;
+  width: 32px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.script-gen-body {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+.script-gen-config {
+  padding: 16px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.script-gen-config button.primary {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.script-gen-output {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px;
+}
+
+.sg-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.sg-tab {
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.sg-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.sg-panels {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+}
+
+.sg-panel {
+  display: none;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.sg-panel.active {
+  display: block;
+}
+
+.sg-panel:empty::before {
+  content: "Nothing generated yet.";
+  color: var(--muted);
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+
+.sg-output-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sg-output-actions button {
+  flex: 1;
+}
+
+@media (max-width: 760px) {
+  .script-gen-body {
+    grid-template-columns: 1fr;
+  }
+
+  .script-gen-config {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
 @media (max-width: 760px) {
   .topbar {
     align-items: flex-start;

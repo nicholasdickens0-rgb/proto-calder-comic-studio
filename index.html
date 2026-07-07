@@ -17,6 +17,7 @@
           </div>
         </div>
         <div class="top-actions">
+          <button id="scriptGenBtn" type="button">Script Generator</button>
           <button id="loadSampleBtn" type="button">Load Page 7 Clean</button>
           <label class="file-button">
             Import Image
@@ -256,6 +257,110 @@
           </section>
         </aside>
       </main>
+    </div>
+
+    <div id="scriptGenModal" class="modal-backdrop hidden">
+      <div class="modal script-gen-modal">
+        <div class="modal-header">
+          <h2>AI Comic Script Generator</h2>
+          <button id="scriptGenCloseBtn" type="button" class="icon-btn" aria-label="Close">&times;</button>
+        </div>
+        <div class="script-gen-body">
+          <div class="script-gen-config">
+            <label class="field">
+              Manuscript text
+              <textarea id="sgManuscriptInput" rows="10" placeholder="Paste your story, chapter, or manuscript text here..."></textarea>
+            </label>
+
+            <div class="field-row">
+              <label class="field">
+                Art style
+                <select id="sgArtStyleInput">
+                  <option value="manga">Manga (black & white)</option>
+                  <option value="western">Western comic (full color)</option>
+                  <option value="webtoon">Webtoon (vertical scroll)</option>
+                </select>
+              </label>
+              <label class="field" id="sgReadingDirectionField">
+                Reading direction
+                <select id="sgReadingDirectionInput">
+                  <option value="ltr">Left-to-right</option>
+                  <option value="rtl">Right-to-left (traditional manga)</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field">
+                Scope
+                <select id="sgScopeInput">
+                  <option value="opening">Opening only (1-3 chapters)</option>
+                  <option value="full-issue">Full Issue #1 (22-24 pages)</option>
+                  <option value="custom">Custom scope</option>
+                </select>
+              </label>
+              <label class="field">
+                Audience
+                <select id="sgAudienceInput">
+                  <option value="all-ages">All ages</option>
+                  <option value="teen">Teen</option>
+                  <option value="mature">Mature</option>
+                </select>
+              </label>
+            </div>
+
+            <label class="field">
+              Tone reference (optional)
+              <input id="sgToneInput" type="text" placeholder="e.g. like Attack on Titan, like a Saturday morning cartoon">
+            </label>
+
+            <label class="toggle-field">
+              <input id="sgTrackerToggle" type="checkbox">
+              Include panel tracker table
+            </label>
+
+            <label class="field">
+              Claude API key
+              <input id="sgApiKeyInput" type="password" placeholder="sk-ant-...">
+            </label>
+
+            <label class="field">
+              Model
+              <select id="sgModelInput">
+                <option value="claude-sonnet-5">Claude Sonnet 5 (recommended)</option>
+                <option value="claude-opus-4-8">Claude Opus 4.8 (highest quality, slower)</option>
+                <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fastest, cheapest)</option>
+              </select>
+            </label>
+
+            <button id="sgGenerateBtn" type="button" class="primary">Generate Comic Package</button>
+
+            <div id="sgStatus" class="assistant-status" aria-live="polite">
+              <span class="assistant-dot"></span>
+              <span id="sgStatusText">Idle</span>
+            </div>
+          </div>
+
+          <div class="script-gen-output">
+            <div class="sg-tabs">
+              <button class="sg-tab active" data-sg-tab="script" type="button">Script</button>
+              <button class="sg-tab" data-sg-tab="prompts" type="button">Image Prompts</button>
+              <button class="sg-tab" data-sg-tab="characters" type="button">Character Sheets</button>
+              <button class="sg-tab" data-sg-tab="tracker" type="button">Tracker</button>
+            </div>
+            <div class="sg-panels">
+              <pre id="sgPanelScript" class="sg-panel active"></pre>
+              <pre id="sgPanelPrompts" class="sg-panel"></pre>
+              <pre id="sgPanelCharacters" class="sg-panel"></pre>
+              <pre id="sgPanelTracker" class="sg-panel"></pre>
+            </div>
+            <div class="sg-output-actions">
+              <button id="sgCopyBtn" type="button">Copy Current Tab</button>
+              <button id="sgDownloadBtn" type="button">Download All (.md)</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script src="./app.js"></script>
