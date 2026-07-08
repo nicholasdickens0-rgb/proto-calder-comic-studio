@@ -339,6 +339,38 @@
               <span class="assistant-dot"></span>
               <span id="sgStatusText">Idle</span>
             </div>
+
+            <div class="sg-finetune">
+              <h3>Panel Fine-Tuner</h3>
+              <p class="sg-finetune-hint">Got a panel back with AI defects? Paste its prompt, mark what went wrong, and get a corrected prompt for regeneration.</p>
+              <label class="field">
+                Original panel prompt
+                <textarea id="ftPromptInput" rows="5" placeholder="Paste the image prompt that produced the flawed panel..."></textarea>
+              </label>
+              <div class="ft-defect-grid">
+                <label class="toggle-field"><input id="ftFixHands" type="checkbox"> Hands / fingers</label>
+                <label class="toggle-field"><input id="ftFixProportions" type="checkbox"> Body proportions</label>
+                <label class="toggle-field"><input id="ftFixEyes" type="checkbox"> Eyes / eyeballs</label>
+                <label class="toggle-field"><input id="ftFixFace" type="checkbox"> Uncanny face</label>
+                <label class="toggle-field"><input id="ftFixText" type="checkbox"> Unwanted text</label>
+                <label class="toggle-field"><input id="ftFixStyle" type="checkbox"> Style drift</label>
+                <label class="toggle-field"><input id="ftFixBackground" type="checkbox"> Background loss</label>
+                <label class="toggle-field"><input id="ftFixConsistency" type="checkbox"> Character drift</label>
+              </div>
+              <label class="field">
+                Describe the defect (optional)
+                <input id="ftNoteInput" type="text" placeholder="e.g. oversized left hand, third eyeball on forehead">
+              </label>
+              <div class="field-row">
+                <button id="ftBuildBtn" type="button">Build Fix Prompt</button>
+                <button id="ftAiBtn" type="button">AI Refine (API)</button>
+              </div>
+              <label class="field">
+                Corrected prompt
+                <textarea id="ftOutput" rows="6" readonly placeholder="Corrected prompt appears here..."></textarea>
+              </label>
+              <button id="ftCopyBtn" type="button">Copy Corrected Prompt</button>
+            </div>
           </div>
 
           <div class="script-gen-output">

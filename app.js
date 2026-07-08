@@ -3732,3 +3732,165 @@ if (sgUi.applyPlanBtn) sgUi.applyPlanBtn.addEventListener("click", sgApplyLetter
 if (sgUi.copyPlanBtn) sgUi.copyPlanBtn.addEventListener("click", sgCopyLetteringPlan);
 
 sgUi.generateBtn.addEventListener("click", runScriptGenerator);
+
+// ---------------------------------------------------------------------------
+// Panel Fine-Tuner - builds corrected re-generation prompts for panels that
+// came back with common AI art defects (bad hands, warped proportions, extra
+// eyeballs, uncanny faces, style drift, etc). Local rule-based fix by default,
+// optional AI refinement through the same Claude API key as the generator.
+// ---------------------------------------------------------------------------
+
+const ftUi = {
+  promptInput: document.getElementById("ftPromptInput"),
+  noteInput: document.getElementById("ftNoteInput"),
+  output: document.getElementById("ftOutput"),
+  buildBtn: document.getElementById("ftBuildBtn"),
+  aiBtn: document.getElementById("ftAiBtn"),
+  copyBtn: document.getElementById("ftCopyBtn"),
+  defects: {
+    hands: document.getElementById("ftFixHands"),
+    proportions: document.getElementById("ftFixProportions"),
+    eyes: document.getElementById("ftFixEyes"),
+    face: document.getElementById("ftFixFace"),
+    text: document.getElementById("ftFixText"),
+    style: document.getElementById("ftFixStyle"),
+    background: document.getElementById("ftFixBackground"),
+    consistency: document.getElementById("ftFixConsistency")
+  }
+};
+
+const FT_FIX_LIBRARY = {
+  hands: {
+    label: "hands/fingers",
+    positive: "anatomically correct human hands, exactly five fingers per hand, hands naturally proportional to the body",
+    negative: "extra fingers, fused fingers, missing fingers, malformed hands, bad hands, oversized hands, tiny hands"
+  },
+  proportions: {
+    label: "body proportions",
+    positive: "realistic human body proportions, anatomically correct figure, consistent limb lengths, correctly sized head",
+    negative: "deformed anatomy, distorted proportions, elongated limbs, oversized head, extra limbs, twisted torso, warped body"
+  },
+  eyes: {
+    label: "eyes",
+    positive: "exactly two symmetrical eyes with matching natural pupils, coherent gaze direction",
+    negative: "extra eyes, extra eyeballs, third eye, asymmetric eyes, crossed eyes, extra pupils, misaligned eyes, floating eyes"
+  },
+  face: {
+    label: "uncanny face",
+    positive: "natural facial structure, lifelike skin texture, believable human expression",
+    negative: "uncanny valley, glassy eyes, plastic skin, doll face, airbrushed skin, melted facial features, distorted face"
+  },
+  text: {
+    label: "unwanted text",
+    positive: "clean artwork with no lettering",
+    negative: "text, letters, words, speech bubbles, captions, written text, typography, watermark, signature"
+  },
+  style: {
+    label: "style drift",
+    positive: "one single consistent art style throughout the image",
+    negative: "mixed art styles, style drift, photorealistic bleed, 3D render, clashing rendering styles"
+  },
+  background: {
+    label: "background loss",
+    positive: "fully detailed coherent background that matches the described scene",
+    negative: "white background, empty background, missing background, plain backdrop, vanishing environment"
+  },
+  consistency: {
+    label: "character drift",
+    positive: "character exactly matching the established reference design, identical hair color, identical facial features, identical outfit",
+    negative: "inconsistent face, changed hair color, random costume changes, different character appearance, off-model character"
+  }
+};
+
+function ftSelectedDefects() {
+  return Object.keys(FT_FIX_LIBRARY).filter((key) => ftUi.defects[key] && ftUi.defects[key].checked);
+}
+
+function ftSplitPrompt(raw) {
+  const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+  const negativeLines = [];
+  const promptLines = [];
+  lines.forEach((line) => {
+    if (/^(--no\s|negative prompt\s*:)/i.test(line)) negativeLines.push(line.replace(/^(--no\s+|negative prompt\s*:\s*)/i, ""));
+    else promptLines.push(line);
+  });
+  return { prompt: promptLines.join(" "), negatives: negativeLines.join(", ") };
+}
+
+function ftMergeTokens(...lists) {
+  const seen = new Set();
+  const out = [];
+  lists.join(", ").split(",").map((t) => t.trim()).filter(Boolean).forEach((token) => {
+    const key = token.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(token);
+  });
+  return out.join(", ");
+}
+
+function ftBuildFixPrompt() {
+  const raw = ftUi.promptInput.value.trim();
+  const defects = ftSelectedDefects();
+  const note = ftUi.noteInput.value.trim();
+  if (!raw) {
+    setSgStatus("Paste the original panel prompt first", "error");
+    return;
+  }
+  if (!defects.length && !note) {
+    setSgStatus("Tick at least one defect or describe the issue", "error");
+    return;
+  }
+  const { prompt, negatives } = ftSplitPrompt(raw);
+  const positives = defects.map((key) => FT_FIX_LIBRARY[key].positive);
+  const negativeAdds = defects.map((key) => FT_FIX_LIBRARY[key].negative);
+  if (note) negativeAdds.push(note);
+  const corrected = `${ftMergeTokens(prompt, positives.join(", "))}\n--no ${ftMergeTokens(negatives, negativeAdds.join(", "))}`;
+  ftUi.output.value = corrected;
+  setSgStatus(`Fix prompt built (${defects.length} defect group${defects.length === 1 ? "" : "s"})`);
+}
+
+async function ftAiRefine() {
+  const raw = ftUi.promptInput.value.trim();
+  const defects = ftSelectedDefects();
+  const note = ftUi.noteInput.value.trim();
+  const apiKey = sgUi.apiKeyInput.value.trim();
+  if (!raw) {
+    setSgStatus("Paste the original panel prompt first", "error");
+    return;
+  }
+  if (!defects.length && !note) {
+    setSgStatus("Tick at least one defect or describe the issue", "error");
+    return;
+  }
+  if (!apiKey) {
+    setSgStatus("Enter your Claude API key first (used for AI refine)", "error");
+    return;
+  }
+  const defectSummary = defects.map((key) => FT_FIX_LIBRARY[key].label).join(", ");
+  const system = "You are an expert AI-art prompt engineer. You repair image generation prompts whose output came back with anatomical or stylistic defects. Rewrite the given prompt so the defect cannot recur: strengthen the relevant positive constraints, keep every scene, character, style, and parameter detail intact, and merge (never duplicate) negative prompt tokens. Reply with ONLY the corrected prompt followed by a single '--no' negative prompt line. No commentary.";
+  const user = [
+    `ORIGINAL PROMPT:\n${raw}`,
+    defectSummary ? `DEFECTS OBSERVED: ${defectSummary}` : null,
+    note ? `SPECIFIC ISSUE: ${note}` : null
+  ].filter(Boolean).join("\n\n");
+  try {
+    ftUi.aiBtn.disabled = true;
+    setSgStatus("AI refining fix prompt...", "busy");
+    const refined = await callClaude(apiKey, sgUi.modelInput.value, system, user, 2000);
+    ftUi.output.value = refined;
+    setSgStatus("AI-refined fix prompt ready");
+  } catch (error) {
+    setSgStatus((error && error.message) || "AI refine failed", "error");
+  } finally {
+    ftUi.aiBtn.disabled = false;
+  }
+}
+
+ftUi.buildBtn.addEventListener("click", ftBuildFixPrompt);
+ftUi.aiBtn.addEventListener("click", ftAiRefine);
+ftUi.copyBtn.addEventListener("click", async () => {
+  if (!ftUi.output.value) return;
+  await navigator.clipboard.writeText(ftUi.output.value);
+  setSgStatus("Corrected prompt copied");
+});

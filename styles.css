@@ -728,6 +728,46 @@ canvas {
   font-family: "Segoe UI", Arial, sans-serif;
 }
 
+.sg-finetune {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+.sg-finetune h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: #4d514b;
+  letter-spacing: 0.03em;
+}
+
+.sg-finetune-hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.ft-defect-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+  margin-bottom: 10px;
+}
+
+.ft-defect-grid .toggle-field {
+  margin: 0;
+}
+
+.sg-finetune .field-row button {
+  width: 100%;
+}
+
+.sg-finetune #ftCopyBtn {
+  width: 100%;
+}
+
 .sg-output-actions {
   display: flex;
   gap: 8px;
