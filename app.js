@@ -3256,11 +3256,29 @@ setTool("select");
 // ---------------------------------------------------------------------------
 // Script Generator - mimics the ai-comic-creator skill: turns a pasted
 // manuscript into a panel-by-panel script, AI image prompts for every panel,
-// and character reference sheet prompts, using the user's own Claude API key.
+// and character reference sheet prompts, using the user's own AI API key.
 // ---------------------------------------------------------------------------
 
+const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const SG_API_KEY_STORAGE = "pccs_claude_api_key";
+const SG_PROVIDER_STORAGE = "pccs_ai_provider";
+const SG_API_KEY_STORAGE = {
+  openai: "pccs_openai_api_key",
+  claude: "pccs_claude_api_key"
+};
+const SG_PROVIDER_MODELS = {
+  openai: [
+    { value: "gpt-5.5", label: "GPT-5.5 (recommended)" },
+    { value: "gpt-5.4", label: "GPT-5.4 (previous baseline)" },
+    { value: "gpt-5.1", label: "GPT-5.1 (compatibility)" },
+    { value: "gpt-4.1", label: "GPT-4.1 (legacy compatibility)" }
+  ],
+  claude: [
+    { value: "claude-sonnet-5", label: "Claude Sonnet 5 (recommended)" },
+    { value: "claude-opus-4-8", label: "Claude Opus 4.8 (highest quality, slower)" },
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (fastest, cheapest)" }
+  ]
+};
 
 const sgUi = {
   openBtn: document.getElementById("scriptGenBtn"),
@@ -3274,6 +3292,8 @@ const sgUi = {
   audienceInput: document.getElementById("sgAudienceInput"),
   toneInput: document.getElementById("sgToneInput"),
   trackerToggle: document.getElementById("sgTrackerToggle"),
+  providerInput: document.getElementById("sgProviderInput"),
+  apiKeyLabel: document.getElementById("sgApiKeyLabel"),
   apiKeyInput: document.getElementById("sgApiKeyInput"),
   modelInput: document.getElementById("sgModelInput"),
   generateBtn: document.getElementById("sgGenerateBtn"),
@@ -3374,6 +3394,47 @@ function sgConfigSummary(config) {
   return lines.join("\n");
 }
 
+function sgActiveProvider() {
+  return sgUi.providerInput && sgUi.providerInput.value === "claude" ? "claude" : "openai";
+}
+
+function sgProviderLabel(provider) {
+  return provider === "claude" ? "Claude" : "OpenAI";
+}
+
+function sgStoredApiKey(provider) {
+  const keyName = SG_API_KEY_STORAGE[provider] || SG_API_KEY_STORAGE.openai;
+  const sessionKey = sessionStorage.getItem(keyName) || "";
+  const legacyKey = localStorage.getItem(keyName) || "";
+  if (!sessionKey && legacyKey) {
+    sessionStorage.setItem(keyName, legacyKey);
+    localStorage.removeItem(keyName);
+    return legacyKey;
+  }
+  return sessionKey;
+}
+
+function sgStoreApiKey(provider, value) {
+  const keyName = SG_API_KEY_STORAGE[provider] || SG_API_KEY_STORAGE.openai;
+  sessionStorage.setItem(keyName, value.trim());
+  localStorage.removeItem(keyName);
+}
+
+function syncSgProviderUi(preserveModel = false) {
+  const provider = sgActiveProvider();
+  const currentModel = preserveModel ? sgUi.modelInput.value : "";
+  const models = SG_PROVIDER_MODELS[provider] || SG_PROVIDER_MODELS.openai;
+  sgUi.modelInput.innerHTML = models
+    .map((model) => `<option value="${model.value}">${model.label}</option>`)
+    .join("");
+  if (currentModel && models.some((model) => model.value === currentModel)) {
+    sgUi.modelInput.value = currentModel;
+  }
+  if (sgUi.apiKeyLabel) sgUi.apiKeyLabel.textContent = `${sgProviderLabel(provider)} API key`;
+  sgUi.apiKeyInput.placeholder = provider === "claude" ? "sk-ant-..." : "sk-...";
+  sgUi.apiKeyInput.value = sgStoredApiKey(provider);
+}
+
 function sgReadCurrentConfig() {
   return {
     artStyle: sgUi.artStyleInput.value,
@@ -3469,6 +3530,51 @@ function sgBuildTrackerFromScript(script) {
   return `${header}\n${body}`;
 }
 
+function extractOpenAIResponseText(data) {
+  if (typeof data.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+
+  const parts = [];
+  for (const item of data.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content.text === "string") parts.push(content.text);
+      else if (content.text && typeof content.text.value === "string") parts.push(content.text.value);
+    }
+  }
+
+  const fallback = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (typeof fallback === "string") parts.push(fallback);
+  return parts.join("\n").trim();
+}
+
+async function callOpenAI(apiKey, model, system, userText, maxTokens) {
+  const body = {
+    model,
+    instructions: system,
+    input: userText,
+    max_output_tokens: maxTokens
+  };
+  if (/^gpt-5/i.test(model)) body.reasoning = { effort: "medium" };
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`OpenAI API error (${response.status}): ${errorBody.slice(0, 300)}`);
+  }
+  const data = await response.json();
+  const text = extractOpenAIResponseText(data);
+  if (!text) throw new Error("OpenAI returned an empty response.");
+  return text;
+}
+
 async function callClaude(apiKey, model, system, userText, maxTokens) {
   const response = await fetch(CLAUDE_API_URL, {
     method: "POST",
@@ -3491,6 +3597,11 @@ async function callClaude(apiKey, model, system, userText, maxTokens) {
   }
   const data = await response.json();
   return (data.content || []).map((block) => block.text || "").join("\n").trim();
+}
+
+function callAiProvider(provider, apiKey, model, system, userText, maxTokens) {
+  if (provider === "claude") return callClaude(apiKey, model, system, userText, maxTokens);
+  return callOpenAI(apiKey, model, system, userText, maxTokens);
 }
 
 function setSgStatus(message, mode = "idle") {
@@ -3643,32 +3754,34 @@ function sgCopyLetteringPlan() {
 async function runScriptGenerator() {
   if (state.scriptGen.busy) return;
   const manuscript = sgUi.manuscriptInput.value.trim();
+  const provider = sgActiveProvider();
   const apiKey = sgUi.apiKeyInput.value.trim();
   if (!manuscript) {
     setSgStatus("Paste manuscript text first", "error");
     return;
   }
   if (!apiKey) {
-    setSgStatus("Enter your Claude API key first", "error");
+    setSgStatus(`Enter your ${sgProviderLabel(provider)} API key first`, "error");
     return;
   }
 
-  localStorage.setItem(SG_API_KEY_STORAGE, apiKey);
+  sgStoreApiKey(provider, apiKey);
+  localStorage.setItem(SG_PROVIDER_STORAGE, provider);
   const config = sgReadCurrentConfig();
   const model = sgUi.modelInput.value;
 
   try {
     setSgBusy(true, "Step 1/4: Reading manuscript and planning...");
-    const plan = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildPlanPrompt(manuscript, config), 4000);
+    const plan = await callAiProvider(provider, apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildPlanPrompt(manuscript, config), 4000);
 
     setSgBusy(true, "Step 2/4: Writing full script...");
-    const script = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildScriptPrompt(plan, config), 8000);
+    const script = await callAiProvider(provider, apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildScriptPrompt(plan, config), 8000);
 
     setSgBusy(true, "Step 3/4: Generating AI image prompts...");
-    const prompts = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildImagePromptsPrompt(script, config), 8000);
+    const prompts = await callAiProvider(provider, apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildImagePromptsPrompt(script, config), 8000);
 
     setSgBusy(true, "Step 4/4: Building character reference sheets...");
-    const characters = await callClaude(apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildCharacterPrompt(script, config), 4000);
+    const characters = await callAiProvider(provider, apiKey, model, COMIC_SCRIPT_SYSTEM_PROMPT, sgBuildCharacterPrompt(script, config), 4000);
 
     const tracker = config.tracker ? sgBuildTrackerFromScript(script) : "";
 
@@ -3681,9 +3794,20 @@ async function runScriptGenerator() {
   }
 }
 
-sgUi.apiKeyInput.value = localStorage.getItem(SG_API_KEY_STORAGE) || "";
+if (sgUi.providerInput) {
+  const storedProvider = localStorage.getItem(SG_PROVIDER_STORAGE);
+  sgUi.providerInput.value = storedProvider === "claude" ? "claude" : "openai";
+}
+syncSgProviderUi(true);
+
+sgUi.providerInput.addEventListener("change", () => {
+  localStorage.setItem(SG_PROVIDER_STORAGE, sgActiveProvider());
+  syncSgProviderUi(false);
+  setSgStatus(`${sgProviderLabel(sgActiveProvider())} selected`);
+});
+
 sgUi.apiKeyInput.addEventListener("change", () => {
-  localStorage.setItem(SG_API_KEY_STORAGE, sgUi.apiKeyInput.value.trim());
+  sgStoreApiKey(sgActiveProvider(), sgUi.apiKeyInput.value.trim());
 });
 
 sgUi.openBtn.addEventListener("click", () => sgUi.modal.classList.remove("hidden"));

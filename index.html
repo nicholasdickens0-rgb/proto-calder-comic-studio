@@ -320,16 +320,25 @@
             </label>
 
             <label class="field">
-              Claude API key
-              <input id="sgApiKeyInput" type="password" placeholder="sk-ant-...">
+              AI provider
+              <select id="sgProviderInput">
+                <option value="openai">OpenAI (recommended)</option>
+                <option value="claude">Claude / Anthropic</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span id="sgApiKeyLabel">OpenAI API key</span>
+              <input id="sgApiKeyInput" type="password" placeholder="sk-...">
             </label>
 
             <label class="field">
               Model
               <select id="sgModelInput">
-                <option value="claude-sonnet-5">Claude Sonnet 5 (recommended)</option>
-                <option value="claude-opus-4-8">Claude Opus 4.8 (highest quality, slower)</option>
-                <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fastest, cheapest)</option>
+                <option value="gpt-5.5">GPT-5.5 (recommended)</option>
+                <option value="gpt-5.4">GPT-5.4 (previous baseline)</option>
+                <option value="gpt-5.1">GPT-5.1 (compatibility)</option>
+                <option value="gpt-4.1">GPT-4.1 (legacy compatibility)</option>
               </select>
             </label>
 
