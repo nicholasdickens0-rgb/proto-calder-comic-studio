@@ -5,6 +5,22 @@ const ui = {
   imageInput: document.getElementById("imageInput"),
   projectInput: document.getElementById("projectInput"),
   loadSampleBtn: document.getElementById("loadSampleBtn"),
+  scriptGenBtn: document.getElementById("scriptGenBtn"),
+  scriptGenModal: document.getElementById("scriptGenModal"),
+  scriptGenCloseBtn: document.getElementById("scriptGenCloseBtn"),
+  sgSourceInput: document.getElementById("sgSourceInput"),
+  sgPageInput: document.getElementById("sgPageInput"),
+  sgPanelInput: document.getElementById("sgPanelInput"),
+  sgPacingInput: document.getElementById("sgPacingInput"),
+  sgGenerateBtn: document.getElementById("sgGenerateBtn"),
+  sgSendPlanBtn: document.getElementById("sgSendPlanBtn"),
+  sgApplyPlanBtn: document.getElementById("sgApplyPlanBtn"),
+  sgStatus: document.getElementById("sgStatus"),
+  sgStatusText: document.getElementById("sgStatusText"),
+  sgTabs: Array.from(document.querySelectorAll("[data-sg-tab]")),
+  sgOutput: document.getElementById("sgOutput"),
+  sgCopyBtn: document.getElementById("sgCopyBtn"),
+  sgDownloadBtn: document.getElementById("sgDownloadBtn"),
   undoBtn: document.getElementById("undoBtn"),
   redoBtn: document.getElementById("redoBtn"),
   saveProjectBtn: document.getElementById("saveProjectBtn"),
@@ -74,6 +90,20 @@ const state = {
   assistant: {
     beats: [],
     busy: false
+  },
+  scriptGenerator: {
+    source: "",
+    pageNumber: 1,
+    panelCount: 5,
+    pacing: "cinematic",
+    activeTab: "script",
+    outputs: {
+      script: "",
+      letteringPlan: "",
+      imagePrompts: "",
+      characterSheets: "",
+      tracker: ""
+    }
   },
   history: {
     undo: [],
@@ -244,6 +274,22 @@ const bubblePresets = {
   }
 };
 
+const scriptGenTabs = {
+  script: "Script",
+  letteringPlan: "Lettering Plan",
+  imagePrompts: "Image Prompts",
+  characterSheets: "Character Sheets",
+  tracker: "Tracker"
+};
+
+const emptyScriptOutputs = {
+  script: "",
+  letteringPlan: "",
+  imagePrompts: "",
+  characterSheets: "",
+  tracker: ""
+};
+
 function id(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -300,6 +346,438 @@ function runAssistantAction(label, work, doneMessage) {
       setStatus("Assistant error");
     }
   }, 40);
+}
+
+function setScriptGenStatus(message, mode = "idle") {
+  if (!ui.sgStatusText || !ui.sgStatus) return;
+  ui.sgStatusText.textContent = message;
+  ui.sgStatus.classList.toggle("busy", mode === "busy");
+  ui.sgStatus.classList.toggle("error", mode === "error");
+}
+
+function hasDraftScriptGeneratorUi() {
+  return Boolean(ui.sgSourceInput && ui.sgOutput);
+}
+
+function currentScriptOutput() {
+  const tab = state.scriptGenerator.activeTab;
+  return state.scriptGenerator.outputs[tab] || "";
+}
+
+function updateScriptGenButtons() {
+  if (!hasDraftScriptGeneratorUi()) return;
+  const hasPlan = Boolean((state.scriptGenerator.outputs.letteringPlan || "").trim());
+  if (ui.sgSendPlanBtn) ui.sgSendPlanBtn.disabled = !hasPlan;
+  if (ui.sgApplyPlanBtn) ui.sgApplyPlanBtn.disabled = !hasPlan;
+  if (ui.sgCopyBtn) ui.sgCopyBtn.disabled = !currentScriptOutput().trim();
+  if (ui.sgDownloadBtn) ui.sgDownloadBtn.disabled = !currentScriptOutput().trim();
+}
+
+function syncScriptGenForm() {
+  if (!hasDraftScriptGeneratorUi()) return;
+  ui.sgSourceInput.value = state.scriptGenerator.source || "";
+  ui.sgPageInput.value = state.scriptGenerator.pageNumber || 1;
+  ui.sgPanelInput.value = state.scriptGenerator.panelCount || 5;
+  ui.sgPacingInput.value = state.scriptGenerator.pacing || "cinematic";
+  ui.sgTabs.forEach((button) => {
+    button.classList.toggle("active", button.dataset.sgTab === state.scriptGenerator.activeTab);
+  });
+  ui.sgOutput.value = currentScriptOutput();
+  updateScriptGenButtons();
+}
+
+function setScriptGeneratorOpen(open) {
+  if (!hasDraftScriptGeneratorUi()) {
+    ui.scriptGenModal.classList.toggle("hidden", !open);
+    return;
+  }
+  if (open) {
+    if (!state.scriptGenerator.source.trim()) {
+      state.scriptGenerator.source = ui.assistantInput.value || state.notes || "";
+    }
+    syncScriptGenForm();
+    ui.scriptGenModal.classList.remove("hidden");
+    window.setTimeout(() => ui.sgSourceInput.focus(), 0);
+  } else {
+    ui.scriptGenModal.classList.add("hidden");
+  }
+}
+
+function syncScriptGeneratorInputs() {
+  if (!hasDraftScriptGeneratorUi()) return;
+  state.scriptGenerator.source = ui.sgSourceInput.value;
+  state.scriptGenerator.pageNumber = clamp(Number.parseInt(ui.sgPageInput.value, 10) || 1, 1, 999);
+  state.scriptGenerator.panelCount = clamp(Number.parseInt(ui.sgPanelInput.value, 10) || 5, 3, 9);
+  state.scriptGenerator.pacing = ui.sgPacingInput.value || "cinematic";
+}
+
+function setScriptGenTab(tab) {
+  if (!hasDraftScriptGeneratorUi()) return;
+  if (!scriptGenTabs[tab]) return;
+  state.scriptGenerator.outputs[state.scriptGenerator.activeTab] = ui.sgOutput.value;
+  state.scriptGenerator.activeTab = tab;
+  syncScriptGenForm();
+}
+
+function updateActiveScriptOutput() {
+  if (!hasDraftScriptGeneratorUi()) return;
+  state.scriptGenerator.outputs[state.scriptGenerator.activeTab] = ui.sgOutput.value;
+  updateScriptGenButtons();
+}
+
+function stripQuotes(value) {
+  return (value || "")
+    .trim()
+    .replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, "")
+    .trim();
+}
+
+function normalizeSentence(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/^[-*]\s+/, "")
+    .trim();
+}
+
+function splitSentenceParts(line) {
+  const parts = [];
+  let current = "";
+  let inQuote = false;
+  let pendingEnd = false;
+
+  for (const char of line) {
+    current += char;
+    if (char === "\"" || char === "\u201c" || char === "\u201d") {
+      inQuote = !inQuote;
+    }
+    if (/[.!?]/.test(char)) pendingEnd = true;
+    if (pendingEnd && !inQuote && /\s/.test(char)) {
+      const sentence = normalizeSentence(current);
+      if (sentence) parts.push(sentence);
+      current = "";
+      pendingEnd = false;
+    }
+  }
+
+  const final = normalizeSentence(current);
+  if (final) parts.push(final);
+  return parts;
+}
+
+function splitStoryBeats(source) {
+  const lines = String(source || "")
+    .replace(/\r/g, "")
+    .split(/\n+/)
+    .map(normalizeSentence)
+    .filter(Boolean)
+    .filter((line) => !/^\|?\s*-+\s*\|?/.test(line));
+  const beats = [];
+
+  for (const line of lines) {
+    if (/^\|/.test(line) && line.includes("|")) continue;
+    const parts = splitSentenceParts(line);
+    for (const part of parts) {
+      const beat = normalizeSentence(part);
+      if (beat) beats.push(beat);
+    }
+  }
+
+  return beats.length ? beats : [normalizeSentence(source)].filter(Boolean);
+}
+
+function conciseText(text, limit = 112) {
+  const value = normalizeSentence(text);
+  if (value.length <= limit) return value;
+  const words = value.split(/\s+/);
+  let out = "";
+  for (const word of words) {
+    const next = out ? `${out} ${word}` : word;
+    if (next.length > limit - 1) break;
+    out = next;
+  }
+  return `${out.replace(/[,.!?;:]+$/, "")}.`;
+}
+
+function extractDialogueBeats(source) {
+  const text = String(source || "");
+  const beats = [];
+  const quoteRegex = /["\u201c]([^"\u201d]{2,180})["\u201d]/g;
+  let match = quoteRegex.exec(text);
+  while (match) {
+    beats.push({ speaker: "", text: conciseText(match[1], 92) });
+    match = quoteRegex.exec(text);
+  }
+
+  for (const line of text.replace(/\r/g, "").split(/\n+/)) {
+    const colon = line.trim().match(/^([A-Z][A-Za-z' -]{1,28}):\s*(.{2,180})$/);
+    if (colon) {
+      beats.push({ speaker: colon[1].trim(), text: conciseText(colon[2], 92) });
+    }
+  }
+
+  return beats.filter((beat, index, list) => (
+    beat.text && list.findIndex((other) => other.text === beat.text) === index
+  ));
+}
+
+function sfxFromBeat(beat, pacing) {
+  const text = beat.toLowerCase();
+  if (/rope|snap|splinter|crack|break|fracture|wood/.test(text)) return "KRAK";
+  if (/thunder|storm|wave|sea|cliff|crash|surge|impact/.test(text)) return pacing === "action" ? "KRA-KOOM" : "THOOM";
+  if (/blade|metal|clang|shield/.test(text)) return "CLANG";
+  if (/whisper|breath|hush/.test(text)) return "hsssh";
+  return "";
+}
+
+function panelShot(panel, panelCount, pacing) {
+  if (panel === 1) return "Wide establishing";
+  if (panel === panelCount) return pacing === "action" ? "Wide impact reveal" : "Cinematic reveal";
+  if (panelCount >= 5 && panel === panelCount - 1) return "Extreme close-up";
+  if (pacing === "dialogue") return panel % 2 ? "Over-shoulder" : "Reaction close-up";
+  if (pacing === "action") return panel % 2 ? "Action insert" : "Low-angle medium";
+  if (pacing === "quiet") return panel % 2 ? "Held medium" : "Quiet close-up";
+  return panel % 2 ? "Medium composition" : "Close detail";
+}
+
+function placementForPanel(panel, panelCount, type, action) {
+  const value = `${type} ${action}`.toLowerCase();
+  if (/sfx/i.test(type)) {
+    if (/rope|snap|crack|wood/.test(value)) return "Beside the break, action visible";
+    return "Near impact, not over key action";
+  }
+  if (/balloon/i.test(type)) {
+    if (panel === panelCount - 1) return "Left negative space, tail to speaker";
+    return panel % 2 ? "Upper-left negative space, tail to speaker" : "Upper-right negative space, tail to speaker";
+  }
+  if (panel === 1) return "Upper-left sky";
+  if (panel === panelCount) return "Upper-right sky/negative space";
+  if (/window|door|sky|sea/.test(value)) return "Right/window negative space";
+  return panel % 2 ? "Upper-left negative space" : "Upper-right negative space";
+}
+
+function panelAct(panel, panelCount) {
+  if (panel === 1) return "establish";
+  if (panel === panelCount) return "reveal";
+  if (panelCount >= 5 && panel === panelCount - 1) return "turn";
+  if (panel === 2) return "human";
+  return "pressure";
+}
+
+function buildScriptPanels(source, panelCount, pacing) {
+  const beats = splitStoryBeats(source);
+  const dialogue = extractDialogueBeats(source);
+  const panels = [];
+  let dialogueIndex = 0;
+
+  for (let panel = 1; panel <= panelCount; panel += 1) {
+    const beat = beats[Math.min(beats.length - 1, Math.floor((panel - 1) / panelCount * beats.length))] || beats[(panel - 1) % beats.length] || "";
+    const nextBeat = beats[Math.min(beats.length - 1, panel)] || beat;
+    const act = panelAct(panel, panelCount);
+    const sfx = act === "pressure" || pacing === "action" ? sfxFromBeat(beat, pacing) : "";
+    const beatDialogue = extractDialogueBeats(beat)[0] || null;
+    let line = beatDialogue;
+    if (!line && pacing === "dialogue" && dialogue[dialogueIndex]) {
+      line = dialogue[dialogueIndex++];
+    } else if (line && dialogue[dialogueIndex] && dialogue[dialogueIndex].text === line.text) {
+      dialogueIndex += 1;
+    }
+    const action = conciseText(beat || nextBeat, 132);
+    const type = sfx ? "SFX" : line ? "Balloon" : "Caption";
+    const text = sfx || (line && line.text) || conciseText(beat || nextBeat, 116);
+
+    panels.push({
+      panel,
+      act,
+      shot: panelShot(panel, panelCount, pacing),
+      action,
+      type,
+      text,
+      speaker: line && line.speaker ? line.speaker : "",
+      placement: placementForPanel(panel, panelCount, type, action)
+    });
+  }
+
+  return panels;
+}
+
+function markdownTable(rows, columns) {
+  const header = `| ${columns.join(" | ")} |`;
+  const divider = `| ${columns.map(() => "---").join(" | ")} |`;
+  const body = rows.map((row) => `| ${columns.map((column) => row[column] || "").join(" | ")} |`);
+  return [header, divider, ...body].join("\n");
+}
+
+function buildScriptOutput(pageNumber, panels, pacing) {
+  const rows = panels.map((panel) => ({
+    Panel: String(panel.panel),
+    Shot: panel.shot,
+    Action: panel.action,
+    Lettering: `${panel.type}: "${panel.text}"`
+  }));
+  return [
+    `# Page ${pageNumber} Script`,
+    `Pacing: ${pacing}`,
+    "",
+    markdownTable(rows, ["Panel", "Shot", "Action", "Lettering"])
+  ].join("\n");
+}
+
+function buildLetteringPlanOutput(panels) {
+  const rows = panels.map((panel) => ({
+    Panel: String(panel.panel),
+    Type: panel.type,
+    Text: `"${panel.text}"`,
+    Placement: panel.placement
+  }));
+  return markdownTable(rows, ["Panel", "Type", "Text", "Placement"]);
+}
+
+function buildImagePromptsOutput(pageNumber, panels, source) {
+  const setting = conciseText(source, 150);
+  return panels.map((panel) => [
+    `Panel ${panel.panel} - ${panel.shot}`,
+    `Prompt: cinematic fantasy comic panel, ${panel.action}, Calder's Remnants mood, rich painterly detail, readable silhouettes, protected face and hand anatomy, no lettering, no watermarks.`,
+    `Continuity: page ${pageNumber}, ${setting}`,
+    "Negative: cropped faces, distorted hands, extra fingers, random symbols, unreadable action, text baked into art."
+  ].join("\n")).join("\n\n");
+}
+
+function extractCharacterNames(source) {
+  const ignored = new Set([
+    "The", "A", "An", "And", "But", "Or", "Inside", "Outside", "Page", "Panel",
+    "Caption", "SFX", "Script", "Calder", "Remnants"
+  ]);
+  const names = [];
+  const regex = /\b[A-Z][a-zA-Z']{2,}\b/g;
+  let match = regex.exec(source);
+  while (match) {
+    const name = match[0];
+    if (!ignored.has(name) && !names.includes(name)) names.push(name);
+    match = regex.exec(source);
+  }
+  ["Aegir", "Draugen"].forEach((name) => {
+    if (source.toLowerCase().includes(name.toLowerCase()) && !names.includes(name)) names.push(name);
+  });
+  return names.slice(0, 8);
+}
+
+function buildCharacterSheetsOutput(source, panels) {
+  const names = extractCharacterNames(source);
+  const rows = (names.length ? names : ["Lead figure", "Opposing force", "Village crowd"]).map((name) => {
+    const mentions = panels
+      .filter((panel) => `${panel.action} ${panel.text}`.toLowerCase().includes(name.toLowerCase().split(" ")[0]))
+      .map((panel) => `P${panel.panel}`)
+      .join(", ") || "Page continuity";
+    return {
+      Character: name,
+      Role: name === "Aegir" ? "Sea god presence" : name === "Draugen" ? "Threat or named horror" : "Story figure",
+      Consistency: "Keep face, costume, scale, hair, hands, and silhouette consistent across panels.",
+      Panels: mentions
+    };
+  });
+  return markdownTable(rows, ["Character", "Role", "Consistency", "Panels"]);
+}
+
+function buildTrackerOutput(pageNumber, panels) {
+  const rows = [
+    { Task: "Page script", Status: "Drafted", Notes: `Page ${pageNumber}, ${panels.length} panels` },
+    { Task: "Lettering plan", Status: "Ready", Notes: "Send to Assistant, then apply to canvas" },
+    { Task: "Image prompts", Status: "Ready", Notes: "Use per-panel prompts for clean art generation" },
+    { Task: "Character continuity", Status: "Needs review", Notes: "Confirm outfits and hand scale before final art" },
+    { Task: "Lettering QA", Status: "Pending", Notes: "Run Tidy Lettering after panel guides are correct" }
+  ];
+  return markdownTable(rows, ["Task", "Status", "Notes"]);
+}
+
+function generatedPackageFromSource(source, pageNumber, panelCount, pacing) {
+  const panels = buildScriptPanels(source, panelCount, pacing);
+  return {
+    script: buildScriptOutput(pageNumber, panels, pacing),
+    letteringPlan: buildLetteringPlanOutput(panels),
+    imagePrompts: buildImagePromptsOutput(pageNumber, panels, source),
+    characterSheets: buildCharacterSheetsOutput(source, panels),
+    tracker: buildTrackerOutput(pageNumber, panels)
+  };
+}
+
+function generateScriptPackage() {
+  syncScriptGeneratorInputs();
+  if (!state.scriptGenerator.source.trim()) {
+    setScriptGenStatus("Paste a scene or page beat first.", "error");
+    return;
+  }
+  setScriptGenStatus("Generating page package...", "busy");
+  window.setTimeout(() => {
+    state.scriptGenerator.outputs = generatedPackageFromSource(
+      state.scriptGenerator.source,
+      state.scriptGenerator.pageNumber,
+      state.scriptGenerator.panelCount,
+      state.scriptGenerator.pacing
+    );
+    state.scriptGenerator.activeTab = "script";
+    syncScriptGenForm();
+    setScriptGenStatus("Page package ready");
+    setStatus("Script package generated");
+  }, 40);
+}
+
+function sendGeneratedPlanToAssistant(showStatus = true) {
+  updateActiveScriptOutput();
+  const plan = state.scriptGenerator.outputs.letteringPlan || "";
+  if (!plan.trim()) {
+    setScriptGenStatus("Generate a lettering plan first.", "error");
+    return false;
+  }
+  ui.assistantInput.value = plan;
+  ui.assistantToneInput.value = "auto";
+  state.assistant.beats = [];
+  assistantCards([
+    { title: "Generated Plan Sent", body: "The lettering plan is now in Studio Assistant and ready to apply." },
+    { title: "Next", body: "Use Apply Plan, then run Detect Panel Guides and Tidy Lettering for the page art." }
+  ]);
+  if (showStatus) {
+    setScriptGenStatus("Lettering plan sent to Assistant");
+    setStatus("Generated plan ready in Assistant");
+  }
+  return true;
+}
+
+function applyGeneratedPlanToCanvas() {
+  if (!sendGeneratedPlanToAssistant(false)) return;
+  setScriptGeneratorOpen(false);
+  runAssistantAction("Applying generated lettering plan", assistantApplyPlan, "Generated lettering applied");
+}
+
+function copyScriptGenOutput() {
+  updateActiveScriptOutput();
+  const text = currentScriptOutput();
+  if (!text.trim()) {
+    setScriptGenStatus("Nothing to copy yet.", "error");
+    return;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => setScriptGenStatus(`${scriptGenTabs[state.scriptGenerator.activeTab]} copied`))
+      .catch(() => setScriptGenStatus("Copy failed. Select the text and copy manually.", "error"));
+    return;
+  }
+  ui.sgOutput.select();
+  document.execCommand("copy");
+  setScriptGenStatus(`${scriptGenTabs[state.scriptGenerator.activeTab]} copied`);
+}
+
+function downloadScriptGenOutput() {
+  updateActiveScriptOutput();
+  const text = currentScriptOutput();
+  if (!text.trim()) {
+    setScriptGenStatus("Nothing to download yet.", "error");
+    return;
+  }
+  const tab = state.scriptGenerator.activeTab;
+  const name = `${safeFileName(state.title || "calder-page")}_${tab}.md`;
+  downloadBlob(new Blob([text], { type: "text/markdown" }), name);
+  setScriptGenStatus(`${scriptGenTabs[tab]} downloaded`);
 }
 
 function snapshotData() {
@@ -2504,9 +2982,11 @@ async function loadSample() {
 }
 
 function projectData() {
+  syncScriptGeneratorInputs();
+  updateActiveScriptOutput();
   return {
     app: "Proto Calder Comic Studio",
-    version: 8,
+    version: 9,
     title: state.title,
     imageName: state.imageName,
     imageDataUrl: state.imageDataUrl,
@@ -2515,6 +2995,14 @@ function projectData() {
       input: ui.assistantInput.value,
       tone: ui.assistantToneInput.value,
       beats: state.assistant.beats
+    },
+    scriptGenerator: {
+      source: state.scriptGenerator.source,
+      pageNumber: state.scriptGenerator.pageNumber,
+      panelCount: state.scriptGenerator.panelCount,
+      pacing: state.scriptGenerator.pacing,
+      activeTab: state.scriptGenerator.activeTab,
+      outputs: state.scriptGenerator.outputs
     },
     balloons: state.balloons,
     safeZones: state.safeZones,
@@ -2541,6 +3029,16 @@ function loadProjectFile(file) {
       ui.assistantInput.value = data.assistant && data.assistant.input ? data.assistant.input : "";
       ui.assistantToneInput.value = data.assistant && data.assistant.tone ? data.assistant.tone : "auto";
       state.assistant.beats = data.assistant && Array.isArray(data.assistant.beats) ? data.assistant.beats : [];
+      state.scriptGenerator = {
+        ...state.scriptGenerator,
+        ...(data.scriptGenerator || {}),
+        outputs: {
+          ...emptyScriptOutputs,
+          ...((data.scriptGenerator && data.scriptGenerator.outputs) || {})
+        }
+      };
+      if (!scriptGenTabs[state.scriptGenerator.activeTab]) state.scriptGenerator.activeTab = "script";
+      syncScriptGenForm();
       state.balloons = (data.balloons || []).map(normalizeBalloon);
       state.safeZones = data.safeZones || [];
       state.panels = data.panels || [];
@@ -2633,6 +3131,26 @@ ui.createBalloonsBtn.addEventListener("click", () => runAssistantAction("Creatin
 ui.autoPlaceBtn.addEventListener("click", () => runAssistantAction("Placing balloon", assistantAutoPlaceSelected));
 ui.applyPlanBtn.addEventListener("click", () => runAssistantAction("Applying lettering plan", assistantApplyPlan));
 ui.tidyLetteringBtn.addEventListener("click", () => runAssistantAction("Tidying lettering", assistantTidyLettering, "Lettering tidied"));
+if (hasDraftScriptGeneratorUi()) {
+  ui.scriptGenBtn.addEventListener("click", () => setScriptGeneratorOpen(true));
+  ui.scriptGenCloseBtn.addEventListener("click", () => setScriptGeneratorOpen(false));
+  ui.scriptGenModal.addEventListener("pointerdown", (event) => {
+    if (event.target === ui.scriptGenModal) setScriptGeneratorOpen(false);
+  });
+  ui.sgGenerateBtn.addEventListener("click", generateScriptPackage);
+  ui.sgSendPlanBtn.addEventListener("click", () => sendGeneratedPlanToAssistant(true));
+  ui.sgApplyPlanBtn.addEventListener("click", applyGeneratedPlanToCanvas);
+  ui.sgTabs.forEach((button) => {
+    button.addEventListener("click", () => setScriptGenTab(button.dataset.sgTab));
+  });
+  ui.sgOutput.addEventListener("input", updateActiveScriptOutput);
+  ui.sgSourceInput.addEventListener("input", syncScriptGeneratorInputs);
+  ui.sgPageInput.addEventListener("input", syncScriptGeneratorInputs);
+  ui.sgPanelInput.addEventListener("input", syncScriptGeneratorInputs);
+  ui.sgPacingInput.addEventListener("change", syncScriptGeneratorInputs);
+  ui.sgCopyBtn.addEventListener("click", copyScriptGenOutput);
+  ui.sgDownloadBtn.addEventListener("click", downloadScriptGenOutput);
+}
 ui.undoBtn.addEventListener("click", undo);
 ui.redoBtn.addEventListener("click", redo);
 ui.loadSampleBtn.addEventListener("click", loadSample);
@@ -2701,6 +3219,12 @@ ui.notesInput.addEventListener("change", handleNotesChange);
 });
 
 window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !ui.scriptGenModal.classList.contains("hidden")) {
+    event.preventDefault();
+    setScriptGeneratorOpen(false);
+    return;
+  }
+
   const key = event.key.toLowerCase();
   const shortcut = event.ctrlKey || event.metaKey;
   if (shortcut && key === "z") {
@@ -2763,7 +3287,10 @@ const sgUi = {
     tracker: document.getElementById("sgPanelTracker")
   },
   copyBtn: document.getElementById("sgCopyBtn"),
-  downloadBtn: document.getElementById("sgDownloadBtn")
+  downloadBtn: document.getElementById("sgDownloadBtn"),
+  sendPlanBtn: document.getElementById("sgSendPlanBtn"),
+  applyPlanBtn: document.getElementById("sgApplyPlanBtn"),
+  copyPlanBtn: document.getElementById("sgCopyPlanBtn")
 };
 
 state.scriptGen = {
@@ -2986,6 +3513,133 @@ function renderSgResults() {
   sgUi.panels.tracker.textContent = results.tracker;
 }
 
+function sgCleanLetteringText(value) {
+  return String(value || "")
+    .replace(/^[-*]\s+/, "")
+    .replace(/^CAPTION:\s*/i, "")
+    .replace(/^SFX:\s*/i, "")
+    .replace(/^[A-Z][A-Z0-9' -]{1,32}:\s*/i, "")
+    .replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, "")
+    .replace(/\|/g, "/")
+    .trim();
+}
+
+function sgFirstUsefulLine(lines) {
+  return lines.map(sgCleanLetteringText).find(Boolean) || "";
+}
+
+function sgLetteringPlacement(panelNumber, panelCount, type, text, visual) {
+  const value = `${type} ${text} ${visual}`.toLowerCase();
+  if (/sfx/i.test(type)) {
+    if (/rope|snap|crack|wood|break|splinter/.test(value)) return "Beside the break, action visible";
+    return "Near impact, not over key action";
+  }
+  if (/balloon/i.test(type)) {
+    if (/draugen|eye|whisper/.test(value)) return "Left negative space, tail to speaker";
+    return panelNumber % 2 ? "Upper-left negative space, tail to speaker" : "Upper-right negative space, tail to speaker";
+  }
+  if (panelNumber === 1) return "Upper-left sky";
+  if (panelNumber === panelCount) return "Upper-right sky/negative space";
+  if (/window|door|sky|sea/.test(value)) return "Right/window negative space";
+  return panelNumber % 2 ? "Upper-left negative space" : "Upper-right negative space";
+}
+
+function sgPanelsFromScript(script) {
+  const panels = [];
+  let current = null;
+
+  for (const rawLine of String(script || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const panelMatch = line.match(/^PANEL\s+(\d+)/i);
+    if (panelMatch) {
+      if (current) panels.push(current);
+      current = {
+        panel: Number.parseInt(panelMatch[1], 10),
+        visual: [],
+        captions: [],
+        dialogue: [],
+        sfx: []
+      };
+      continue;
+    }
+    if (!current) continue;
+    if (/^CAPTION\s*:/i.test(line)) current.captions.push(line);
+    else if (/^SFX\s*:/i.test(line)) current.sfx.push(line);
+    else if (/^[A-Z][A-Z0-9' -]{1,32}\s*:\s*["\u201c]/i.test(line)) current.dialogue.push(line);
+    else if (!/^\[?ARTIST NOTE/i.test(line)) current.visual.push(line);
+  }
+
+  if (current) panels.push(current);
+  return panels.filter((panel) => Number.isFinite(panel.panel));
+}
+
+function sgLetteringPlanFromScript(script) {
+  const panels = sgPanelsFromScript(script);
+  if (!panels.length) return "";
+  const panelCount = Math.max(...panels.map((panel) => panel.panel));
+  const rows = ["| Panel | Type | Text | Placement |", "|---|---|---|---|"];
+
+  for (const panel of panels) {
+    const visual = panel.visual.join(" ");
+    const items = [];
+    for (const value of panel.sfx) items.push({ type: "SFX", text: sgCleanLetteringText(value) });
+    for (const value of panel.dialogue) items.push({ type: "Balloon", text: sgCleanLetteringText(value) });
+    for (const value of panel.captions) items.push({ type: "Caption", text: sgCleanLetteringText(value) });
+    if (!items.length && visual) items.push({ type: "Caption", text: sgFirstUsefulLine(panel.visual) });
+
+    for (const item of items) {
+      if (!item.text) continue;
+      const placement = sgLetteringPlacement(panel.panel, panelCount, item.type, item.text, visual);
+      rows.push(`| ${panel.panel} | ${item.type} | "${item.text}" | ${placement} |`);
+    }
+  }
+
+  return rows.length > 2 ? rows.join("\n") : "";
+}
+
+function sgCurrentLetteringPlan() {
+  const script = state.scriptGen.results.script || (sgUi.panels.script && sgUi.panels.script.textContent) || "";
+  return sgLetteringPlanFromScript(script);
+}
+
+function sgSendLetteringPlanToAssistant(showStatus = true) {
+  const plan = sgCurrentLetteringPlan();
+  if (!plan) {
+    setSgStatus("Generate a script first, then send the lettering plan.", "error");
+    return false;
+  }
+  ui.assistantInput.value = plan;
+  ui.assistantToneInput.value = "auto";
+  state.assistant.beats = [];
+  assistantCards([
+    { title: "Generated Plan Sent", body: "The script output is now in Studio Assistant as an editable lettering plan." },
+    { title: "Next", body: "Apply the plan, then run Detect Panel Guides and Tidy Lettering against the page art." }
+  ]);
+  if (showStatus) {
+    setSgStatus("Lettering plan sent to Assistant");
+    setStatus("Generated plan ready in Assistant");
+  }
+  return true;
+}
+
+function sgApplyLetteringPlanToCanvas() {
+  if (!sgSendLetteringPlanToAssistant(false)) return;
+  sgUi.modal.classList.add("hidden");
+  runAssistantAction("Applying generated lettering plan", assistantApplyPlan, "Generated lettering applied");
+}
+
+function sgCopyLetteringPlan() {
+  const plan = sgCurrentLetteringPlan();
+  if (!plan) {
+    setSgStatus("No lettering plan to copy yet.", "error");
+    return;
+  }
+  navigator.clipboard.writeText(plan)
+    .then(() => setSgStatus("Lettering plan copied"))
+    .catch(() => setSgStatus("Could not copy lettering plan", "error"));
+}
+
 async function runScriptGenerator() {
   if (state.scriptGen.busy) return;
   const manuscript = sgUi.manuscriptInput.value.trim();
@@ -3072,5 +3726,9 @@ sgUi.downloadBtn.addEventListener("click", () => {
   const blob = new Blob([sections.join("\n")], { type: "text/markdown" });
   downloadBlob(blob, `${safeFileName(state.title || "comic")}_script_package.md`);
 });
+
+if (sgUi.sendPlanBtn) sgUi.sendPlanBtn.addEventListener("click", () => sgSendLetteringPlanToAssistant(true));
+if (sgUi.applyPlanBtn) sgUi.applyPlanBtn.addEventListener("click", sgApplyLetteringPlanToCanvas);
+if (sgUi.copyPlanBtn) sgUi.copyPlanBtn.addEventListener("click", sgCopyLetteringPlan);
 
 sgUi.generateBtn.addEventListener("click", runScriptGenerator);

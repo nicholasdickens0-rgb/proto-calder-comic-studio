@@ -449,6 +449,120 @@ canvas {
   display: none;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(14, 17, 16, 0.52);
+}
+
+.modal-backdrop.hidden {
+  display: none;
+}
+
+.script-gen-panel {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #9ba397;
+  border-radius: 8px;
+  background: #fbfaf5;
+  box-shadow: 0 24px 80px rgba(12, 16, 14, 0.38);
+}
+
+.script-gen-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.script-gen-header h2 {
+  margin-bottom: 4px;
+}
+
+.script-gen-header p {
+  margin: 0;
+  max-width: 720px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.script-gen-header button {
+  flex: 0 0 auto;
+}
+
+.script-gen-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(420px, 1fr);
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.script-gen-source,
+.script-gen-results {
+  min-width: 0;
+}
+
+.script-gen-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.script-gen-actions .primary {
+  grid-column: 1 / -1;
+}
+
+.script-gen-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.script-gen-tabs button {
+  min-height: 34px;
+  padding: 7px 9px;
+}
+
+.script-gen-tabs button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.script-gen-output {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffefa;
+  color: var(--ink);
+  padding: 12px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.script-gen-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .check-list {
   display: grid;
   gap: 8px;
@@ -653,5 +767,22 @@ canvas {
   .right-panel {
     border: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .script-gen-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .script-gen-panel {
+    max-height: calc(100vh - 24px);
+  }
+
+  .script-gen-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .script-gen-output {
+    min-height: 300px;
   }
 }

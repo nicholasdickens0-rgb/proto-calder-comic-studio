@@ -45,6 +45,8 @@ http://localhost:5177
 - Tidies Page 1 lettering with art-aware placement rules for faces, rope action, eye close-ups, and major battle silhouettes.
 - Uses curved connected speech tails and hybrid cinematic caption/SFX styling.
 - Watch Studio Assistant status while it works, with clear success and error messages.
+- Use Script Generator to turn a manuscript excerpt or page beat into a page script, lettering plan, image prompts, character sheets, and a production tracker.
+- Send a generated lettering plan directly into Studio Assistant, or apply it to the canvas as editable lettering objects.
 - Move and resize balloons/zones/guides.
 - Drag balloon tail points.
 - Undo and redo page edits with buttons or keyboard shortcuts.
