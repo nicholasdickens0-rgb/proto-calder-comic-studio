@@ -768,14 +768,34 @@ canvas {
   width: 100%;
 }
 
+.mature-adapter {
+  background: rgba(47, 111, 103, 0.055);
+  border: 1px solid rgba(47, 111, 103, 0.18);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.mature-adapter textarea[readonly] {
+  min-height: 150px;
+}
+
+.mature-overlay-grid {
+  grid-template-columns: 1fr;
+}
+
+.mature-adapter .field-row button {
+  width: 100%;
+}
+
 .sg-output-actions {
   display: flex;
   gap: 8px;
   margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 .sg-output-actions button {
-  flex: 1;
+  flex: 1 1 150px;
 }
 
 @media (max-width: 760px) {

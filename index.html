@@ -148,17 +148,21 @@
                 <label class="field">
                   Style
                   <select id="styleInput">
-                    <option value="rounded">Rounded</option>
-                    <option value="oval">Classic oval</option>
-                    <option value="manga">Soft manga</option>
-                    <option value="caption">Caption box</option>
-                    <option value="sfx">SFX text</option>
-                    <option value="whisper">Whisper</option>
-                    <option value="shout">Shout burst</option>
-                    <option value="thought">Thought cloud</option>
-                    <option value="magic">Rune glow</option>
-                  </select>
-                </label>
+                  <option value="rounded">Rounded</option>
+                  <option value="oval">Classic oval</option>
+                  <option value="manga">Soft manga</option>
+                  <option value="caption">Caption box</option>
+                  <option value="sfx">SFX text</option>
+                  <option value="whisper">Whisper</option>
+                  <option value="shout">Shout burst</option>
+                  <option value="thought">Thought cloud</option>
+                  <option value="magic">Rune glow</option>
+                  <option value="blood">Blood overlay</option>
+                  <option value="slash">Slash / damage</option>
+                  <option value="shadow">Cinematic shadow</option>
+                  <option value="shield">Blue shield dome</option>
+                </select>
+              </label>
 
                 <div class="swatch-row">
                   <label class="field">
@@ -382,6 +386,53 @@
                 <textarea id="ftOutput" rows="6" readonly placeholder="Corrected prompt appears here..."></textarea>
               </label>
               <button id="ftCopyBtn" type="button">Copy Corrected Prompt</button>
+            </div>
+
+            <div class="sg-finetune mature-adapter">
+              <h3>Mature Scene Adapter</h3>
+              <p class="sg-finetune-hint">Preserve the story beat while phrasing the image prompt as cinematic protection, stylized violence, implied horror, or tasteful adult intimacy.</p>
+              <label class="field">
+                Scene that needs careful depiction
+                <textarea id="msSceneInput" rows="5" placeholder="Describe the scene truthfully: who is there, what danger or intimacy matters, what must not be compromised..."></textarea>
+              </label>
+              <div class="field-row">
+                <label class="field">
+                  Scene mode
+                  <select id="msModeInput">
+                    <option value="child-peril">Child peril / miracle rescue</option>
+                    <option value="violence">Stylized violence</option>
+                    <option value="gore">Blood / aftermath horror</option>
+                    <option value="adult-intimacy">Adult intimacy</option>
+                    <option value="implied-horror">Implied horror</option>
+                  </select>
+                </label>
+                <label class="field">
+                  Intensity
+                  <select id="msIntensityInput">
+                    <option value="restrained">Restrained</option>
+                    <option value="visible">Visible but controlled</option>
+                    <option value="brutal">Brutal atmosphere</option>
+                  </select>
+                </label>
+              </div>
+              <div class="ft-defect-grid mature-overlay-grid">
+                <label class="toggle-field"><input id="msOverlayShield" type="checkbox" checked> Shield / miracle light</label>
+                <label class="toggle-field"><input id="msOverlayBlood" type="checkbox"> Blood accents</label>
+                <label class="toggle-field"><input id="msOverlaySlash" type="checkbox"> Slash / damage marks</label>
+                <label class="toggle-field"><input id="msOverlayShadow" type="checkbox" checked> Shadow / silhouette crop</label>
+              </div>
+              <div class="field-row">
+                <button id="msBuildBtn" type="button">Build Adapted Prompt</button>
+                <button id="msOverlayBtn" type="button">Add Overlays</button>
+              </div>
+              <label class="field">
+                Adapted production prompt
+                <textarea id="msOutput" rows="7" readonly placeholder="Prompt rewrite and overlay plan appear here..."></textarea>
+              </label>
+              <div class="field-row">
+                <button id="msSendToFtBtn" type="button">Send to Fine-Tuner</button>
+                <button id="msCopyBtn" type="button">Copy Adapted Prompt</button>
+              </div>
             </div>
           </div>
 

@@ -1171,6 +1171,10 @@ function balloonDisplayText(balloon) {
   return (balloon.text || "").toUpperCase();
 }
 
+function isMatureOverlayStyle(style) {
+  return ["blood", "slash", "shadow", "shield"].includes(style);
+}
+
 function fitBalloonText(context, balloon) {
   let size = balloon.fontSize;
   let lines = [];
@@ -1387,8 +1391,114 @@ function drawSfxText(context, balloon, scale = 1, selected = false, exportMode =
   context.restore();
 }
 
+function drawBloodOverlay(context, x, y, w, h, seed, scale) {
+  context.save();
+  context.globalCompositeOperation = "multiply";
+  for (let i = 0; i < 16; i += 1) {
+    const px = x + w * (((seed + i * 47) % 100) / 100);
+    const py = y + h * (((seed + i * 83) % 100) / 100);
+    const r = Math.max(2, (4 + ((seed + i * 17) % 13)) * scale);
+    context.beginPath();
+    context.ellipse(px, py, r * (0.7 + (i % 3) * 0.28), r * (0.75 + (i % 2) * 0.35), ((seed + i) % 9) * 0.18, 0, Math.PI * 2);
+    context.fillStyle = i % 4 === 0 ? "rgba(96, 8, 12, 0.62)" : "rgba(130, 13, 18, 0.48)";
+    context.fill();
+    if (i % 5 === 0) {
+      context.strokeStyle = "rgba(88, 6, 10, 0.44)";
+      context.lineWidth = Math.max(1, 2 * scale);
+      context.beginPath();
+      context.moveTo(px, py + r * 0.4);
+      context.quadraticCurveTo(px + r * 0.6, py + r * 2.1, px + r * 0.15, py + r * 3.5);
+      context.stroke();
+    }
+  }
+  context.restore();
+}
+
+function drawSlashOverlay(context, x, y, w, h, seed, scale) {
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  for (let i = 0; i < 3; i += 1) {
+    const offset = (i - 1) * h * 0.18;
+    const wobble = ((seed + i * 31) % 9 - 4) * scale;
+    context.beginPath();
+    context.moveTo(x + w * 0.12, y + h * 0.28 + offset);
+    context.lineTo(x + w * 0.48 + wobble, y + h * 0.5 + offset * 0.22);
+    context.lineTo(x + w * 0.9, y + h * 0.72 + offset);
+    context.strokeStyle = "rgba(248, 239, 210, 0.82)";
+    context.lineWidth = Math.max(3, 5 * scale);
+    context.stroke();
+    context.strokeStyle = "rgba(82, 8, 10, 0.72)";
+    context.lineWidth = Math.max(1.4, 2.2 * scale);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawShadowOverlay(context, x, y, w, h, scale) {
+  context.save();
+  const gradient = context.createRadialGradient(x + w * 0.5, y + h * 0.48, Math.max(1, w * 0.08), x + w * 0.5, y + h * 0.5, Math.max(w, h) * 0.68);
+  gradient.addColorStop(0, "rgba(5, 8, 12, 0.1)");
+  gradient.addColorStop(0.58, "rgba(5, 8, 12, 0.34)");
+  gradient.addColorStop(1, "rgba(5, 8, 12, 0.02)");
+  context.fillStyle = gradient;
+  context.beginPath();
+  context.ellipse(x + w / 2, y + h / 2, Math.max(1, w / 2), Math.max(1, h / 2), 0, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = "rgba(255, 255, 255, 0.16)";
+  context.lineWidth = Math.max(1, 1.5 * scale);
+  context.stroke();
+  context.restore();
+}
+
+function drawShieldOverlay(context, x, y, w, h, scale) {
+  context.save();
+  const gradient = context.createRadialGradient(x + w * 0.5, y + h * 0.52, Math.max(1, w * 0.08), x + w * 0.5, y + h * 0.52, Math.max(w, h) * 0.58);
+  gradient.addColorStop(0, "rgba(232, 255, 255, 0.38)");
+  gradient.addColorStop(0.45, "rgba(87, 191, 255, 0.24)");
+  gradient.addColorStop(1, "rgba(41, 117, 212, 0.04)");
+  context.fillStyle = gradient;
+  context.strokeStyle = "rgba(145, 226, 255, 0.78)";
+  context.lineWidth = Math.max(2, 3 * scale);
+  context.shadowColor = "rgba(86, 190, 255, 0.72)";
+  context.shadowBlur = 24 * scale;
+  context.beginPath();
+  context.ellipse(x + w / 2, y + h * 0.62, Math.max(1, w / 2), Math.max(1, h * 0.55), 0, Math.PI, Math.PI * 2);
+  context.lineTo(x + w, y + h * 0.64);
+  context.quadraticCurveTo(x + w * 0.5, y + h * 0.88, x, y + h * 0.64);
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.shadowBlur = 0;
+  context.strokeStyle = "rgba(220, 250, 255, 0.42)";
+  context.lineWidth = Math.max(1, 1.4 * scale);
+  for (let i = 1; i <= 3; i += 1) {
+    context.beginPath();
+    context.ellipse(x + w / 2, y + h * 0.62, Math.max(1, (w / 2) * (i / 3)), Math.max(1, h * 0.52 * (i / 3)), 0, Math.PI, Math.PI * 2);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawMatureOverlay(context, balloon, scale = 1, selected = false, exportMode = false) {
+  const x = balloon.x * scale;
+  const y = balloon.y * scale;
+  const w = balloon.w * scale;
+  const h = balloon.h * scale;
+  const seed = seedFromId(balloon.id || balloon.style || "overlay");
+  if (balloon.style === "blood") drawBloodOverlay(context, x, y, w, h, seed, scale);
+  else if (balloon.style === "slash") drawSlashOverlay(context, x, y, w, h, seed, scale);
+  else if (balloon.style === "shadow") drawShadowOverlay(context, x, y, w, h, scale);
+  else if (balloon.style === "shield") drawShieldOverlay(context, x, y, w, h, scale);
+  if (selected && !exportMode) drawSelection(context, balloon, scale, "#2f6f67");
+}
+
 function drawBalloon(context, balloon, scale = 1, selected = false, exportMode = false) {
   normalizeBalloon(balloon);
+  if (isMatureOverlayStyle(balloon.style)) {
+    drawMatureOverlay(context, balloon, scale, selected, exportMode);
+    return;
+  }
   if (balloon.style === "sfx") {
     drawSfxText(context, balloon, scale, selected, exportMode);
     return;
@@ -4347,8 +4457,216 @@ const FT_FIX_LIBRARY = {
   }
 };
 
+const msUi = {
+  sceneInput: document.getElementById("msSceneInput"),
+  modeInput: document.getElementById("msModeInput"),
+  intensityInput: document.getElementById("msIntensityInput"),
+  output: document.getElementById("msOutput"),
+  buildBtn: document.getElementById("msBuildBtn"),
+  overlayBtn: document.getElementById("msOverlayBtn"),
+  sendToFtBtn: document.getElementById("msSendToFtBtn"),
+  copyBtn: document.getElementById("msCopyBtn"),
+  overlays: {
+    shield: document.getElementById("msOverlayShield"),
+    blood: document.getElementById("msOverlayBlood"),
+    slash: document.getElementById("msOverlaySlash"),
+    shadow: document.getElementById("msOverlayShadow")
+  }
+};
+
+const MATURE_SCENE_MODES = {
+  "child-peril": {
+    label: "Child peril / miracle rescue",
+    prompt: "tense miracle rescue moment, infant or small child safe in a cradle or protected space, falling danger held several feet away before contact, translucent blue protective dome intercepting the threat, light shining through the child's small hand, surrounding adults panicked but the child unharmed",
+    negative: "injured child, child harm, contact with child, crushed child, dead child, gore on child, sexualized child, unsafe infant pose",
+    notes: "Frame the beat as protection before impact. Show danger, distance, shield, and adult panic; never show injury or contact."
+  },
+  violence: {
+    label: "Stylized violence",
+    prompt: "mature dark fantasy comic action, stylized combat violence, wounded clothing, impact pose, controlled blood accents, dramatic motion and readable anatomy, non-photorealistic illustrated comic rendering",
+    negative: "photoreal gore, torture focus, exposed organs, excessive dismemberment, real injury photography, child victim",
+    notes: "Generate the acting, pose, lighting, and aftermath first; finish blood and damage with controlled overlays."
+  },
+  gore: {
+    label: "Blood / aftermath horror",
+    prompt: "grim aftermath horror panel, blood-stained ground and clothing, torn fabric, battlefield damage, ominous shadows, stylized dark fantasy illustration, emotionally serious tone, gore suggested through aftermath details",
+    negative: "photoreal gore, exposed organs close-up, fetishized violence, torture spectacle, real injury photography, child victim",
+    notes: "Use stylized aftermath and partial crops. Add exact splatter or wound emphasis with overlays after generation."
+  },
+  "adult-intimacy": {
+    label: "Adult intimacy",
+    prompt: "two clearly adult consenting characters in an intimate romantic moment, clothed or artfully draped, candlelit atmosphere, close faces, hands touching, emotional tension, tasteful mature romance, cinematic shadows",
+    negative: "minor, teen, childlike body, non-consensual, explicit sexual act, visible genitals, pornographic framing, graphic nudity",
+    notes: "Keep sensuality in lighting, proximity, posture, and expression. Do not ask the image model for explicit sexual anatomy or acts."
+  },
+  "implied-horror": {
+    label: "Implied horror",
+    prompt: "implied horror comic panel, silhouette and shadow doing the heavy storytelling, fearful reaction shot, obscured threat, blood or damage only at the edge of frame, tense negative space, cinematic dark fantasy mood",
+    negative: "photoreal gore, explicit mutilation, torture spectacle, real injury photography, child victim",
+    notes: "Use crop, shadow, reaction, SFX, and aftermath to keep the story severe without making the model solve every graphic detail."
+  }
+};
+
+const MATURE_INTENSITY = {
+  restrained: "restrained mature tone, mostly implied, clean readable acting",
+  visible: "visible but controlled mature details, stylized blood or sensual atmosphere, no gratuitous focus",
+  brutal: "brutal atmosphere and high danger, harsh contrast, heavy emotional weight, mature comic intensity without photorealistic gore or explicit sex"
+};
+
 function ftSelectedDefects() {
   return Object.keys(FT_FIX_LIBRARY).filter((key) => ftUi.defects[key] && ftUi.defects[key].checked);
+}
+
+function msSelectedOverlays() {
+  return Object.keys(msUi.overlays).filter((key) => msUi.overlays[key] && msUi.overlays[key].checked);
+}
+
+function msSceneDetail(raw, mode) {
+  const value = normalizeSentence(raw).slice(0, 700);
+  if (mode === "child-peril") {
+    return value
+      .replace(/\b(crush|crushed|crushing|kill|killed|dead|mangle|mangled|impale|impaled|injure|injured)\b/gi, "threaten")
+      .replace(/\b(blood|gore|wound|wounded)\b/gi, "danger")
+      .replace(/\b(on|against|touching)\s+(the\s+)?(baby|infant|child)\b/gi, "near the protected child");
+  }
+  if (mode === "adult-intimacy") {
+    return value
+      .replace(/\b(explicit|penetration|genitals|pornographic)\b/gi, "tasteful")
+      .replace(/\bteen|minor|underage|child\b/gi, "clearly adult");
+  }
+  return value;
+}
+
+function msOverlayPlan(overlays, mode) {
+  if (!overlays.length) return "No overlays selected; rely on composition, crop, and lighting.";
+  const labels = {
+    shield: "blue shield dome / miracle light",
+    blood: "controlled blood accents",
+    slash: "slash or damage marks",
+    shadow: "cinematic shadow / silhouette crop"
+  };
+  const plan = overlays.map((key) => labels[key]).filter(Boolean).join(", ");
+  if (mode === "child-peril") return `${plan}. Keep the protected child completely untouched and readable.`;
+  if (mode === "adult-intimacy") return `${plan}. Use shadow and crop for sensuality; do not add explicit anatomy.`;
+  return `${plan}. Place overlays after base art so faces, hands, and key action stay readable.`;
+}
+
+function msBuildAdaptedPrompt() {
+  const raw = msUi.sceneInput.value.trim();
+  if (!raw) {
+    setSgStatus("Describe the mature scene first", "error");
+    return "";
+  }
+  const modeKey = msUi.modeInput.value || "child-peril";
+  const mode = MATURE_SCENE_MODES[modeKey] || MATURE_SCENE_MODES["child-peril"];
+  const intensity = MATURE_INTENSITY[msUi.intensityInput.value] || MATURE_INTENSITY.restrained;
+  const sceneDetail = msSceneDetail(raw, modeKey);
+  const overlays = msSelectedOverlays();
+  const prompt = [
+    "ADAPTED IMAGE PROMPT:",
+    [
+      "dark fantasy comic panel",
+      "hybrid cinematic manga/comic rendering",
+      mode.prompt,
+      sceneDetail ? `scene-specific details: ${sceneDetail}` : "",
+      intensity,
+      "clear staging, protected faces and hands, strong negative space for lettering, production-ready panel art"
+    ].filter(Boolean).join(", "),
+    `--no ${ftMergeTokens(mode.negative, "watermark, random text, extra limbs, bad hands, distorted anatomy, blurry, low quality")}`,
+    "",
+    "PRODUCTION NOTES:",
+    mode.notes,
+    "",
+    "OVERLAY PLAN:",
+    msOverlayPlan(overlays, modeKey)
+  ].join("\n");
+  msUi.output.value = prompt;
+  setSgStatus("Mature scene prompt adapted");
+  return prompt;
+}
+
+function msPromptOnly() {
+  const output = msUi.output.value.trim() || msBuildAdaptedPrompt();
+  if (!output) return "";
+  const match = output.match(/ADAPTED IMAGE PROMPT:\s*([\s\S]*?)(?:\n\nPRODUCTION NOTES:|$)/i);
+  return (match ? match[1] : output).trim();
+}
+
+function msOverlayBaseRect() {
+  const selected = selectedObject();
+  if (selected && (state.selected.type === "panel" || state.selected.type === "safe" || state.selected.type === "balloon")) {
+    return { x: selected.x, y: selected.y, w: selected.w, h: selected.h };
+  }
+  return pageRect();
+}
+
+function msOverlayRecord(style, base, index) {
+  const plans = {
+    shield: { x: 0.2, y: 0.24, w: 0.6, h: 0.48 },
+    blood: { x: 0.16, y: 0.56, w: 0.38, h: 0.24 },
+    slash: { x: 0.34, y: 0.28, w: 0.42, h: 0.28 },
+    shadow: { x: 0.07, y: 0.08, w: 0.86, h: 0.78 }
+  };
+  const plan = plans[style] || plans.shadow;
+  const jitter = index * 16;
+  const styleColors = {
+    blood: ["#7d0b12", "#4b060a"],
+    slash: ["#f6ead2", "#5a080b"],
+    shadow: ["#05080c", "#05080c"],
+    shield: ["#d9fbff", "#6ecfff"]
+  };
+  const [fill, strokeColor] = styleColors[style] || styleColors.shadow;
+  return normalizeBalloon({
+    id: id(style),
+    style,
+    preset: "",
+    text: "",
+    x: Math.round(base.x + base.w * plan.x + jitter),
+    y: Math.round(base.y + base.h * plan.y + jitter * 0.35),
+    w: Math.max(48, Math.round(base.w * plan.w)),
+    h: Math.max(34, Math.round(base.h * plan.h)),
+    fontSize: 12,
+    padding: 0,
+    radius: 0,
+    stroke: 2,
+    fill,
+    strokeColor,
+    textColor: fill,
+    hasTail: false,
+    tailWidth: 0,
+    fillOpacity: style === "shadow" ? 0.38 : 0.72
+  });
+}
+
+function msAddProductionOverlays() {
+  let overlays = msSelectedOverlays();
+  if (!overlays.length) {
+    const mode = msUi.modeInput.value;
+    overlays = mode === "child-peril" ? ["shield", "shadow"] : mode === "adult-intimacy" ? ["shadow"] : ["blood", "slash", "shadow"];
+  }
+  pushHistory();
+  const base = msOverlayBaseRect();
+  const created = overlays.map((style, index) => msOverlayRecord(style, base, index));
+  state.balloons.push(...created);
+  const last = created[created.length - 1];
+  if (last) select("balloon", last.id);
+  render();
+  updateChecks();
+  setSgStatus(`${created.length} production overlay${created.length === 1 ? "" : "s"} added`);
+}
+
+function msSyncOverlayDefaults() {
+  const mode = msUi.modeInput.value;
+  const defaults = {
+    "child-peril": { shield: true, blood: false, slash: false, shadow: true },
+    violence: { shield: false, blood: true, slash: true, shadow: true },
+    gore: { shield: false, blood: true, slash: true, shadow: true },
+    "adult-intimacy": { shield: false, blood: false, slash: false, shadow: true },
+    "implied-horror": { shield: false, blood: false, slash: false, shadow: true }
+  }[mode] || {};
+  for (const [key, checked] of Object.entries(defaults)) {
+    if (msUi.overlays[key]) msUi.overlays[key].checked = checked;
+  }
 }
 
 function ftSplitPrompt(raw) {
@@ -4399,6 +4717,7 @@ async function ftAiRefine() {
   const raw = ftUi.promptInput.value.trim();
   const defects = ftSelectedDefects();
   const note = ftUi.noteInput.value.trim();
+  const provider = sgActiveProvider();
   const apiKey = sgUi.apiKeyInput.value.trim();
   if (!raw) {
     setSgStatus("Paste the original panel prompt first", "error");
@@ -4409,7 +4728,7 @@ async function ftAiRefine() {
     return;
   }
   if (!apiKey) {
-    setSgStatus("Enter your Claude API key first (used for AI refine)", "error");
+    setSgStatus(`Enter your ${sgProviderLabel(provider)} API key first (used for AI refine)`, "error");
     return;
   }
   const defectSummary = defects.map((key) => FT_FIX_LIBRARY[key].label).join(", ");
@@ -4422,7 +4741,7 @@ async function ftAiRefine() {
   try {
     ftUi.aiBtn.disabled = true;
     setSgStatus("AI refining fix prompt...", "busy");
-    const refined = await callClaude(apiKey, sgUi.modelInput.value, system, user, 2000);
+    const refined = await callAiProvider(provider, apiKey, sgUi.modelInput.value, system, user, 2000);
     ftUi.output.value = refined;
     setSgStatus("AI-refined fix prompt ready");
   } catch (error) {
@@ -4439,3 +4758,20 @@ ftUi.copyBtn.addEventListener("click", async () => {
   await navigator.clipboard.writeText(ftUi.output.value);
   setSgStatus("Corrected prompt copied");
 });
+
+msUi.modeInput.addEventListener("change", msSyncOverlayDefaults);
+msUi.buildBtn.addEventListener("click", msBuildAdaptedPrompt);
+msUi.overlayBtn.addEventListener("click", msAddProductionOverlays);
+msUi.sendToFtBtn.addEventListener("click", () => {
+  const prompt = msPromptOnly();
+  if (!prompt) return;
+  ftUi.promptInput.value = prompt;
+  setSgStatus("Adapted prompt sent to Fine-Tuner");
+});
+msUi.copyBtn.addEventListener("click", async () => {
+  const prompt = msUi.output.value.trim() || msBuildAdaptedPrompt();
+  if (!prompt) return;
+  await navigator.clipboard.writeText(prompt);
+  setSgStatus("Adapted prompt copied");
+});
+msSyncOverlayDefaults();
