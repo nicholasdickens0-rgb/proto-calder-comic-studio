@@ -1162,7 +1162,13 @@ function wrapText(context, text, maxWidth) {
 function fontForBalloon(balloon, size) {
   if (balloon.style === "sfx") return `900 ${size}px "Impact", "Arial Black", "Segoe UI", sans-serif`;
   if (balloon.style === "caption" && balloon.fill === "#10151b") return `800 ${size}px Georgia, "Times New Roman", serif`;
-  return `700 ${size}px "Comic Sans MS", "Segoe UI", sans-serif`;
+  return `700 ${size}px "Comic Neue", "Comic Sans MS", "Segoe UI", sans-serif`;
+}
+
+function balloonDisplayText(balloon) {
+  // Comics letter speech in caps; captions keep their written case.
+  if (balloon.style === "caption") return balloon.text || "";
+  return (balloon.text || "").toUpperCase();
 }
 
 function fitBalloonText(context, balloon) {
@@ -1170,10 +1176,11 @@ function fitBalloonText(context, balloon) {
   let lines = [];
   const maxW = Math.max(20, balloon.w - balloon.padding * 2);
   const maxH = Math.max(20, balloon.h - balloon.padding * 2);
+  const displayText = balloonDisplayText(balloon);
 
   while (size >= 12) {
     context.font = fontForBalloon(balloon, size);
-    lines = wrapText(context, balloon.text, maxW);
+    lines = wrapText(context, displayText, maxW);
     const lineHeight = size * 1.22;
     if (lines.length * lineHeight <= maxH) {
       return { size, lines, lineHeight };
@@ -1182,7 +1189,7 @@ function fitBalloonText(context, balloon) {
   }
 
   context.font = fontForBalloon(balloon, 12);
-  return { size: 12, lines: wrapText(context, balloon.text, maxW), lineHeight: 14.5 };
+  return { size: 12, lines: wrapText(context, displayText, maxW), lineHeight: 14.5 };
 }
 
 function sfxBurstPath(context, x, y, w, h, seed) {
@@ -2323,17 +2330,22 @@ function detectedPanelRectsFromImage(panelCount) {
 
   for (let y = 0; y < sampleH; y += 1) {
     let dark = 0;
+    let bright = 0;
     let total = 0;
     for (let x = xStart; x < xEnd; x += xStep) {
       const offset = (y * sampleW + x) * 4;
       const brightness = (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3;
       if (brightness < 30) dark += 1;
+      if (brightness > 226) bright += 1;
       total += 1;
     }
 
     const darkFraction = total ? dark / total : 0;
-    rowScores[y] = darkFraction;
-    if (darkFraction >= 0.76) {
+    const brightFraction = total ? bright / total : 0;
+    // Gutters can be black (manga) or white/paper (painterly pages) - accept both.
+    const gutterScore = Math.max(darkFraction, brightFraction >= 0.88 ? brightFraction : 0);
+    rowScores[y] = gutterScore;
+    if (gutterScore >= 0.76) {
       if (start < 0) start = y;
       end = y;
     } else if (start >= 0) {
@@ -2351,7 +2363,9 @@ function detectedPanelRectsFromImage(panelCount) {
   }
 
   const maxGap = Math.max(1, Math.round(sampleH * 0.0015));
-  const minGutterH = Math.max(2, Math.round(sampleH * 0.0025));
+  // Painterly pages often use hairline gutters only 2-3px tall - keep the
+  // minimum low so a strong-scoring thin seam still counts.
+  const minGutterH = 2;
   const edgePad = Math.max(4, Math.round(sampleH * 0.012));
   let gutters = mergeRowGroups(groups, maxGap).filter((group) => (
     (group.height >= minGutterH && group.score >= 0.82) ||
@@ -2694,13 +2708,149 @@ function rectFromPlacementHint(panelRect, balloon, placement) {
   };
 }
 
-function makePlanBalloon(row, panelCount) {
+// ---------------------------------------------------------------------------
+// Art-aware placement. A coarse detail map of the page art tells the
+// assistant where the quiet areas are (sky, water, flat walls - good balloon
+// real estate) and where the busy areas are (figures, faces - what tails
+// should point at and balloons should avoid).
+// ---------------------------------------------------------------------------
+
+let detailGridCache = null;
+
+function imageDetailGrid() {
+  if (!state.image) return null;
+  const rect = pageRect();
+  const key = `${state.imageName}_${rect.w}x${rect.h}`;
+  if (detailGridCache && detailGridCache.key === key) return detailGridCache;
+
+  const sampleW = 160;
+  const sampleH = Math.max(120, Math.round(sampleW * rect.h / rect.w));
+  const sample = document.createElement("canvas");
+  sample.width = sampleW;
+  sample.height = sampleH;
+  const sampleCtx = sample.getContext("2d", { willReadFrequently: true });
+  if (!sampleCtx) return null;
+  try {
+    sampleCtx.drawImage(state.image, 0, 0, sampleW, sampleH);
+  } catch {
+    return null;
+  }
+  let pixels;
+  try {
+    pixels = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
+  } catch {
+    return null;
+  }
+
+  const lum = new Float32Array(sampleW * sampleH);
+  for (let i = 0; i < sampleW * sampleH; i += 1) {
+    lum[i] = (pixels[i * 4] + pixels[i * 4 + 1] + pixels[i * 4 + 2]) / 3;
+  }
+
+  const cell = 5;
+  const cols = Math.floor(sampleW / cell);
+  const gridRows = Math.floor(sampleH / cell);
+  const cells = new Float32Array(cols * gridRows);
+  const counts = new Float32Array(cols * gridRows);
+  for (let y = 1; y < sampleH - 1; y += 1) {
+    for (let x = 1; x < sampleW - 1; x += 1) {
+      const i = y * sampleW + x;
+      const gradient = Math.abs(lum[i + 1] - lum[i - 1]) + Math.abs(lum[i + sampleW] - lum[i - sampleW]);
+      const cx = Math.min(cols - 1, Math.floor(x / cell));
+      const cy = Math.min(gridRows - 1, Math.floor(y / cell));
+      cells[cy * cols + cx] += gradient;
+      counts[cy * cols + cx] += 1;
+    }
+  }
+  for (let i = 0; i < cells.length; i += 1) {
+    cells[i] = counts[i] ? cells[i] / counts[i] : 0;
+  }
+
+  detailGridCache = { key, cols, rows: gridRows, cellW: rect.w / cols, cellH: rect.h / gridRows, cells };
+  return detailGridCache;
+}
+
+function detailInRect(area) {
+  const grid = imageDetailGrid();
+  if (!grid) return 0;
+  const c0 = clamp(Math.floor(area.x / grid.cellW), 0, grid.cols - 1);
+  const c1 = clamp(Math.ceil((area.x + area.w) / grid.cellW), 0, grid.cols - 1);
+  const r0 = clamp(Math.floor(area.y / grid.cellH), 0, grid.rows - 1);
+  const r1 = clamp(Math.ceil((area.y + area.h) / grid.cellH), 0, grid.rows - 1);
+  let sum = 0;
+  let n = 0;
+  for (let r = r0; r <= r1; r += 1) {
+    for (let c = c0; c <= c1; c += 1) {
+      sum += grid.cells[r * grid.cols + c];
+      n += 1;
+    }
+  }
+  return n ? sum / n : 0;
+}
+
+function overlapArea(a, b) {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+function quietRectInPanel(panelRect, balloon, siblings) {
+  const pad = 14;
+  const anchors = [
+    [0.0, 0.0], [0.5, 0.0], [1.0, 0.0],
+    [0.0, 0.45], [1.0, 0.45],
+    [0.0, 1.0], [0.5, 1.0], [1.0, 1.0]
+  ];
+  const others = siblings.concat(state.balloons);
+  let best = null;
+  anchors.forEach(([fx, fy], index) => {
+    const x = panelRect.x + pad + fx * Math.max(0, panelRect.w - balloon.w - pad * 2);
+    const y = panelRect.y + pad + fy * Math.max(0, panelRect.h - balloon.h - pad * 2);
+    const rect = { x, y, w: balloon.w, h: balloon.h };
+    const busy = detailInRect(rect);
+    let overlap = 0;
+    others.forEach((other) => { overlap += overlapArea(rect, other); });
+    // Quiet art wins; collisions are heavily punished; top spots break ties.
+    const score = busy + (overlap / (rect.w * rect.h)) * 60 + fy * 3 + (index % 2) * 0.4;
+    if (!best || score < best.score) best = { rect, score };
+  });
+  return best ? best.rect : { x: panelRect.x + pad, y: panelRect.y + pad, w: balloon.w, h: balloon.h };
+}
+
+function figureTargetInPanel(panelRect) {
+  const grid = imageDetailGrid();
+  const fallback = { x: panelRect.x + panelRect.w / 2, y: panelRect.y + panelRect.h * 0.55 };
+  if (!grid) return fallback;
+  const c0 = clamp(Math.floor((panelRect.x + panelRect.w * 0.12) / grid.cellW), 0, grid.cols - 1);
+  const c1 = clamp(Math.ceil((panelRect.x + panelRect.w * 0.88) / grid.cellW), 0, grid.cols - 1);
+  const r0 = clamp(Math.floor((panelRect.y + panelRect.h * 0.2) / grid.cellH), 0, grid.rows - 1);
+  const r1 = clamp(Math.ceil((panelRect.y + panelRect.h * 0.92) / grid.cellH), 0, grid.rows - 1);
+  let sumX = 0;
+  let sumY = 0;
+  let sumW = 0;
+  for (let r = r0; r <= r1; r += 1) {
+    for (let c = c0; c <= c1; c += 1) {
+      const value = grid.cells[r * grid.cols + c];
+      const weight = value * value;
+      sumX += (c + 0.5) * grid.cellW * weight;
+      sumY += (r + 0.5) * grid.cellH * weight;
+      sumW += weight;
+    }
+  }
+  if (!sumW) return fallback;
+  return {
+    x: clamp(sumX / sumW, panelRect.x + 16, panelRect.x + panelRect.w - 16),
+    y: clamp(sumY / sumW, panelRect.y + 16, panelRect.y + panelRect.h - 16)
+  };
+}
+
+function makePlanBalloon(row, panelCount, siblings = []) {
   const panelRect = rectForPlanPanel(row.panel, panelCount);
   const preset = row.acting ? row.acting.tone : planPreset(row.type, row.text);
   const isSfx = /sfx/i.test(row.type);
   const isCaption = /caption/i.test(row.type);
   const isQuiet = /small|quiet/i.test(`${row.type} ${row.placement}`);
-  const widthBase = isSfx ? 300 : isCaption ? 330 : 240;
+  const widthBase = isSfx ? 300 : isCaption ? 320 : 205;
   const balloon = normalizeBalloon({
     id: id("balloon"),
     x: panelRect.x + 20,
@@ -2721,13 +2871,20 @@ function makePlanBalloon(row, panelCount) {
   });
   applyBubblePreset(balloon, preset, false);
   applyActing(balloon, row);
+  if (balloon.hasTail && !isSfx && !isCaption) {
+    // Standards: tails are short, clear, and quiet.
+    balloon.tailWidth = Math.min(balloon.tailWidth || 20, 12);
+  }
   if (!applyPageOneProfile(balloon, row.panel, panelRect)) {
-    const position = rectFromPlacementHint(panelRect, balloon, row.placement);
+    const position = (!row.placement && state.image)
+      ? quietRectInPanel(panelRect, balloon, siblings)
+      : rectFromPlacementHint(panelRect, balloon, row.placement);
     balloon.x = position.x;
     balloon.y = position.y;
     if (balloon.hasTail) {
-      balloon.tailX = panelRect.x + panelRect.w / 2;
-      balloon.tailY = panelRect.y + panelRect.h * 0.55;
+      const target = figureTargetInPanel(panelRect);
+      balloon.tailX = target.x;
+      balloon.tailY = target.y;
     }
   }
   return balloon;
@@ -2926,7 +3083,8 @@ function assistantApplyPlan() {
   pushHistory();
   const panelCount = Math.max(...rows.map((row) => row.panel));
   const panelGuideResult = ensurePlanPanelGuides(panelCount);
-  const created = rows.map((row) => makePlanBalloon(row, panelCount));
+  const created = [];
+  rows.forEach((row) => created.push(makePlanBalloon(row, panelCount, created)));
   state.balloons.push(...created);
   const last = created[created.length - 1];
   if (last) select("balloon", last.id);
@@ -3442,6 +3600,7 @@ render();
 updateChecks();
 updateHistoryControls();
 setTool("select");
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => render());
 
 // ---------------------------------------------------------------------------
 // Script Generator - mimics the ai-comic-creator skill: turns a pasted
