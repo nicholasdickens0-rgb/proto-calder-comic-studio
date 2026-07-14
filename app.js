@@ -2696,7 +2696,7 @@ function rectFromPlacementHint(panelRect, balloon, placement) {
 
 function makePlanBalloon(row, panelCount) {
   const panelRect = rectForPlanPanel(row.panel, panelCount);
-  const preset = planPreset(row.type, row.text);
+  const preset = row.acting ? row.acting.tone : planPreset(row.type, row.text);
   const isSfx = /sfx/i.test(row.type);
   const isCaption = /caption/i.test(row.type);
   const isQuiet = /small|quiet/i.test(`${row.type} ${row.placement}`);
@@ -2720,6 +2720,7 @@ function makePlanBalloon(row, panelCount) {
     tailY: panelRect.y + panelRect.h / 2
   });
   applyBubblePreset(balloon, preset, false);
+  applyActing(balloon, row);
   if (!applyPageOneProfile(balloon, row.panel, panelRect)) {
     const position = rectFromPlacementHint(panelRect, balloon, row.placement);
     balloon.x = position.x;
@@ -2732,15 +2733,194 @@ function makePlanBalloon(row, panelCount) {
   return balloon;
 }
 
+// ---------------------------------------------------------------------------
+// Comic script parsing + acting engine.
+// Lets the assistant accept a raw comic script (PAGE / PANEL / NAME: "line" /
+// CAPTION: / SFX:) and "act out" each line: tone, intensity, and a consistent
+// voice per speaker shape every balloon instead of one generic style.
+// ---------------------------------------------------------------------------
+
+const SCRIPT_LINE_SKIP = /^(\[|PAGE PURPOSE|PAGE-TURN|ARTIST NOTE|CONTINUITY|LETTERING|LAYOUT|PROMPT|NEGATIVE|STYLE|```|#|\||-{3,})/i;
+const SCRIPT_RESERVED_NAMES = /^(PAGE|PANEL|CAPTION|SFX|NOTE|ID|ART|CAMERA|LOCATION|TIME)$/i;
+
+function looksLikeComicScript(text) {
+  const value = text || "";
+  return /^\s*PANEL\s+\d+/im.test(value) || /^\s*PAGE\s+\d+/im.test(value) ||
+    /^\s*[A-Z][A-Z0-9 .'-]{1,28}(?:\s*\([^)]*\))?\s*:\s*["“]/m.test(value);
+}
+
+function stripScriptQuotes(text) {
+  return (text || "").trim().replace(/^["“]+/, "").replace(/["”]+$/, "").trim();
+}
+
+function parseComicScript(text) {
+  const pages = [];
+  const speakers = [];
+  let currentPage = null;
+  let currentPanel = 1;
+
+  const ensurePage = (number) => {
+    currentPage = pages.find((p) => p.page === number);
+    if (!currentPage) {
+      currentPage = { page: number, rows: [] };
+      pages.push(currentPage);
+    }
+  };
+
+  const pushRow = (type, rowText, speaker) => {
+    const cleaned = stripScriptQuotes(rowText);
+    if (!cleaned) return;
+    if (!currentPage) ensurePage(1);
+    const row = { panel: currentPanel, type, text: cleaned, placement: "", speaker: speaker || "" };
+    row.acting = computeActing(type, speaker || "", cleaned);
+    currentPage.rows.push(row);
+    if (speaker && !speakers.includes(speaker)) speakers.push(speaker);
+  };
+
+  (text || "").split(/\r?\n/).forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line || SCRIPT_LINE_SKIP.test(line)) return;
+
+    const pageMatch = line.match(/^PAGE\s+(\d+)/i);
+    if (pageMatch) {
+      ensurePage(Number.parseInt(pageMatch[1], 10));
+      currentPanel = 1;
+      return;
+    }
+
+    const panelMatch = line.match(/^PANEL\s+(\d+)/i);
+    if (panelMatch) {
+      currentPanel = Number.parseInt(panelMatch[1], 10);
+      if (!currentPage) ensurePage(1);
+      return;
+    }
+
+    const captionMatch = line.match(/^CAPTION\s*:\s*(.+)$/i);
+    if (captionMatch) {
+      pushRow("Caption", captionMatch[1]);
+      return;
+    }
+
+    const sfxMatch = line.match(/^SFX\s*:\s*(.+)$/i);
+    if (sfxMatch) {
+      pushRow("SFX", sfxMatch[1]);
+      return;
+    }
+
+    const speakerMatch = line.match(/^([A-Z][A-Z0-9 .'-]{1,28}?)(?:\s*\([^)]*\))?\s*:\s*(.+)$/);
+    if (speakerMatch && !SCRIPT_RESERVED_NAMES.test(speakerMatch[1].trim())) {
+      const name = speakerMatch[1].trim();
+      // Real speaker names are shouted in caps in scripts; skip prose like "Note: ..."
+      if (name === name.toUpperCase()) {
+        pushRow("Balloon", speakerMatch[2], name);
+      }
+      return;
+    }
+    // Anything else is panel description - not lettering.
+  });
+
+  return { pages, speakers };
+}
+
+function computeActing(type, speaker, text) {
+  const acting = { tone: "classic", intensity: 0, cold: false };
+  if (/sfx/i.test(type)) {
+    acting.tone = "sfx";
+    acting.intensity = 1;
+    return acting;
+  }
+  if (/caption/i.test(type)) {
+    acting.tone = "caption";
+    return acting;
+  }
+
+  const exclaims = (text.match(/!/g) || []).length;
+  const letters = text.replace(/[^a-zA-Z]/g, "");
+  const capsRatio = letters.length >= 4 ? (letters.replace(/[^A-Z]/g, "").length / letters.length) : 0;
+
+  if (/ildkule|h[aá]logi|gi meg styrke|rune\b/i.test(text)) {
+    acting.tone = "magic";
+    acting.intensity = Math.min(1, 0.4 + exclaims * 0.3);
+    return acting;
+  }
+  if (exclaims === 0 && /monster|never|hate|death|kill/i.test(text)) {
+    acting.tone = "classic";
+    acting.cold = true;
+    return acting;
+  }
+  if (capsRatio > 0.6 || exclaims >= 2 || (/!/.test(text) && /[A-Z]{4,}/.test(text))) {
+    acting.tone = "shout";
+    acting.intensity = Math.min(1, 0.4 + exclaims * 0.3 + capsRatio * 0.4);
+    return acting;
+  }
+  if (/^\.{3}|\.{3}$/.test(text.trim()) || /^\(.+\)$/.test(text.trim())) {
+    acting.tone = /^\(.+\)$/.test(text.trim()) ? "thought" : "whisper";
+    return acting;
+  }
+  acting.intensity = Math.min(1, exclaims * 0.35);
+  if (acting.intensity > 0.3) acting.tone = "manga";
+  return acting;
+}
+
+const SPEAKER_VOICE_TINTS = ["#fffdf4", "#fdf7ea", "#f3f7fb", "#faf3f0", "#f3f8f2", "#f7f3fa"];
+
+function speakerVoice(speaker) {
+  if (!state.assistant.speakerVoices) state.assistant.speakerVoices = {};
+  const voices = state.assistant.speakerVoices;
+  if (!voices[speaker]) {
+    const index = Object.keys(voices).length % SPEAKER_VOICE_TINTS.length;
+    voices[speaker] = { fill: SPEAKER_VOICE_TINTS[index], tailWidth: 16 + (index % 3) * 3 };
+  }
+  return voices[speaker];
+}
+
+function applyActing(balloon, row) {
+  const acting = row.acting;
+  if (!acting) return;
+  balloon.speaker = row.speaker || "";
+
+  if (row.speaker && !/sfx|caption/i.test(row.type)) {
+    const voice = speakerVoice(row.speaker);
+    balloon.fill = voice.fill;
+    balloon.tailWidth = voice.tailWidth;
+  }
+
+  if (acting.cold) {
+    // The icy stillness voice: pale, hard-edged, no wobble, faint glow.
+    balloon.fill = "#eef3f7";
+    balloon.strokeColor = "#40525e";
+    balloon.textColor = "#22303a";
+    balloon.wobble = 0;
+    balloon.texture = 4;
+    balloon.glow = 8;
+    balloon.fontSize = Math.max(18, (balloon.fontSize || 23) - 2);
+    return;
+  }
+
+  if (acting.intensity > 0) {
+    balloon.wobble = Math.min(36, (balloon.wobble || 0) + Math.round(acting.intensity * 8));
+    balloon.fontSize = (balloon.fontSize || 23) + Math.round(acting.intensity * 4);
+    if (acting.intensity > 0.6) balloon.stroke = Math.min(12, (balloon.stroke || 3) + 1);
+  }
+}
+
 function assistantApplyPlan() {
-  const rows = parseLetteringPlan(ui.assistantInput.value);
+  const input = ui.assistantInput.value;
+  let rows = parseLetteringPlan(input);
+  let scriptInfo = null;
+
+  if (!rows.length && looksLikeComicScript(input)) {
+    scriptInfo = parseComicScript(input);
+    if (scriptInfo.pages.length) rows = scriptInfo.pages[0].rows;
+  }
+
   if (!rows.length) {
     assistantCards([{
-      title: "No Plan Rows Found",
-      body: "Paste rows like: | 1 | Caption, upper-left sky | \"The sea raged.\" |",
+      title: "Nothing To Letter",
+      body: "Paste a comic script (PANEL 1 / NAME: \"line\" / CAPTION: / SFX:) or a plan table row like: | 1 | Caption, upper-left sky | \"The sea raged.\" |",
       warn: true
     }]);
-    return { message: "No plan rows found", warn: true };
+    return { message: "No script or plan rows found", warn: true };
   }
 
   pushHistory();
@@ -2752,13 +2932,23 @@ function assistantApplyPlan() {
   if (last) select("balloon", last.id);
   render();
   updateChecks();
-  assistantCards([
-    { title: "Plan Applied", body: `${created.length} editable lettering object${created.length === 1 ? "" : "s"} created from the plan.` },
-    { title: "Panel Guides", body: panelGuideResult.method === "image-gutters" ? "Panel guides were detected from the black gutters in the page art." : state.panels.length ? "Panel guides are active. Adjust them first if a band does not match the art exactly." : "Add panel guides for more accurate future placement." },
-    { title: "Human Pass", body: "Now drag tails, protect key art, and run Critique for overlap and pacing checks." }
-  ]);
-  setStatus("Assistant applied lettering plan");
-  return { message: `${created.length} plan object${created.length === 1 ? "" : "s"} created` };
+
+  const cards = [
+    { title: scriptInfo ? "Script Lettered" : "Plan Applied", body: `${created.length} editable lettering object${created.length === 1 ? "" : "s"} created${scriptInfo ? " and acted out from the script" : " from the plan"}.` }
+  ];
+  if (scriptInfo && scriptInfo.speakers.length) {
+    cards.push({ title: "Voices Cast", body: `Each speaker got a consistent voice: ${scriptInfo.speakers.join(", ")}. Shouts burst, whispers soften, incantations glow, cold lines go still.` });
+  }
+  if (scriptInfo && scriptInfo.pages.length > 1) {
+    const first = scriptInfo.pages[0].page;
+    const rest = scriptInfo.pages.slice(1).map((p) => p.page).join(", ");
+    cards.push({ title: "One Page At A Time", body: `The script contained pages ${first} and ${rest}. Page ${first} was lettered - load the next page's art, then paste again for the rest.`, warn: true });
+  }
+  cards.push({ title: "Panel Guides", body: panelGuideResult.method === "image-gutters" ? "Panel guides were detected from the black gutters in the page art." : state.panels.length ? "Panel guides are active. Adjust them first if a band does not match the art exactly." : "Add panel guides for more accurate future placement." });
+  cards.push({ title: "Human Pass", body: "Now drag tails, protect key art, and run Critique for overlap and pacing checks." });
+  assistantCards(cards);
+  setStatus(scriptInfo ? "Assistant lettered the script" : "Assistant applied lettering plan");
+  return { message: `${created.length} lettering object${created.length === 1 ? "" : "s"} created` };
 }
 
 function assistantCreateBalloons() {
