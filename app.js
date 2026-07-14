@@ -2817,30 +2817,101 @@ function quietRectInPanel(panelRect, balloon, siblings) {
   return best ? best.rect : { x: panelRect.x + pad, y: panelRect.y + pad, w: balloon.w, h: balloon.h };
 }
 
-function figureTargetInPanel(panelRect) {
+function figureClustersInPanel(panelRect) {
   const grid = imageDetailGrid();
-  const fallback = { x: panelRect.x + panelRect.w / 2, y: panelRect.y + panelRect.h * 0.55 };
-  if (!grid) return fallback;
-  const c0 = clamp(Math.floor((panelRect.x + panelRect.w * 0.12) / grid.cellW), 0, grid.cols - 1);
-  const c1 = clamp(Math.ceil((panelRect.x + panelRect.w * 0.88) / grid.cellW), 0, grid.cols - 1);
-  const r0 = clamp(Math.floor((panelRect.y + panelRect.h * 0.2) / grid.cellH), 0, grid.rows - 1);
-  const r1 = clamp(Math.ceil((panelRect.y + panelRect.h * 0.92) / grid.cellH), 0, grid.rows - 1);
-  let sumX = 0;
-  let sumY = 0;
-  let sumW = 0;
+  if (!grid) return [];
+  const c0 = clamp(Math.floor((panelRect.x + panelRect.w * 0.06) / grid.cellW), 0, grid.cols - 1);
+  const c1 = clamp(Math.ceil((panelRect.x + panelRect.w * 0.94) / grid.cellW), 0, grid.cols - 1);
+  const r0 = clamp(Math.floor((panelRect.y + panelRect.h * 0.12) / grid.cellH), 0, grid.rows - 1);
+  const r1 = clamp(Math.ceil((panelRect.y + panelRect.h * 0.95) / grid.cellH), 0, grid.rows - 1);
+
+  const values = [];
   for (let r = r0; r <= r1; r += 1) {
-    for (let c = c0; c <= c1; c += 1) {
-      const value = grid.cells[r * grid.cols + c];
-      const weight = value * value;
-      sumX += (c + 0.5) * grid.cellW * weight;
-      sumY += (r + 0.5) * grid.cellH * weight;
-      sumW += weight;
+    for (let c = c0; c <= c1; c += 1) values.push(grid.cells[r * grid.cols + c]);
+  }
+  if (!values.length) return [];
+  const sorted = values.slice().sort((a, b) => a - b);
+  const threshold = sorted[Math.floor(sorted.length * 0.72)];
+  if (!threshold) return [];
+
+  const cols = c1 - c0 + 1;
+  const rowsN = r1 - r0 + 1;
+  const seen = new Uint8Array(cols * rowsN);
+  const clusters = [];
+
+  for (let r = 0; r < rowsN; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const idx = r * cols + c;
+      if (seen[idx]) continue;
+      const value = grid.cells[(r + r0) * grid.cols + (c + c0)];
+      if (value < threshold) { seen[idx] = 1; continue; }
+      // flood-fill one connected high-detail region (a figure, usually)
+      const stack = [idx];
+      seen[idx] = 1;
+      const members = [];
+      while (stack.length) {
+        const cur = stack.pop();
+        const cr = Math.floor(cur / cols);
+        const cc = cur % cols;
+        const cellValue = grid.cells[(cr + r0) * grid.cols + (cc + c0)];
+        if (cellValue < threshold) continue;
+        members.push({ r: cr, c: cc, v: cellValue });
+        [[cr - 1, cc], [cr + 1, cc], [cr, cc - 1], [cr, cc + 1]].forEach(([nr, nc]) => {
+          if (nr < 0 || nr >= rowsN || nc < 0 || nc >= cols) return;
+          const ni = nr * cols + nc;
+          if (!seen[ni]) { seen[ni] = 1; stack.push(ni); }
+        });
+      }
+      if (members.length < 3) continue;
+      let weight = 0;
+      let sumX = 0;
+      members.sort((a, b) => a.r - b.r);
+      members.forEach((m) => { weight += m.v * m.v; sumX += (m.c + c0 + 0.5) * grid.cellW * m.v * m.v; });
+      // Head point: the weighted x of the cluster, at the top-quarter row of
+      // the cluster - tails should reach for heads, not torsos.
+      const headRow = members[Math.floor((members.length - 1) * 0.22)].r;
+      clusters.push({
+        weight,
+        headX: clamp(sumX / weight, panelRect.x + 14, panelRect.x + panelRect.w - 14),
+        headY: clamp((headRow + r0 + 0.5) * grid.cellH, panelRect.y + 14, panelRect.y + panelRect.h - 14)
+      });
     }
   }
-  if (!sumW) return fallback;
+  return clusters;
+}
+
+function tailAimForBalloon(balloon, panelRect) {
+  const fallback = { x: panelRect.x + panelRect.w / 2, y: panelRect.y + panelRect.h * 0.55 };
+  const clusters = figureClustersInPanel(panelRect);
+  if (!clusters.length) return fallback;
+  const bx = balloon.x + balloon.w / 2;
+  const by = balloon.y + balloon.h / 2;
+  clusters.sort((a, b) => b.weight - a.weight);
+  let pick = clusters[0];
+  // A comparably-strong figure much nearer the balloon is the likelier speaker.
+  clusters.slice(1).forEach((cluster) => {
+    if (cluster.weight < pick.weight * 0.5) return;
+    const dPick = Math.hypot(pick.headX - bx, pick.headY - by);
+    const dCluster = Math.hypot(cluster.headX - bx, cluster.headY - by);
+    if (dCluster < dPick * 0.72) pick = cluster;
+  });
+  return { x: pick.headX, y: pick.headY };
+}
+
+function shortenedTail(balloon, target, panelRect) {
+  // Standards: tails are short and quiet - gesture toward the speaker's head
+  // and stop well before crossing their body.
+  const cx = balloon.x + balloon.w / 2;
+  const cy = balloon.y + balloon.h / 2;
+  const dx = target.x - cx;
+  const dy = target.y - cy;
+  const dist = Math.hypot(dx, dy) || 1;
+  const edge = Math.min(balloon.w, balloon.h) / 2;
+  const reach = Math.min(dist - 26, edge + Math.min(95, Math.max(24, (dist - edge) * 0.45)));
+  const len = Math.max(edge + 14, reach);
   return {
-    x: clamp(sumX / sumW, panelRect.x + 16, panelRect.x + panelRect.w - 16),
-    y: clamp(sumY / sumW, panelRect.y + 16, panelRect.y + panelRect.h - 16)
+    x: clamp(cx + (dx / dist) * len, panelRect.x + 8, panelRect.x + panelRect.w - 8),
+    y: clamp(cy + (dy / dist) * len, panelRect.y + 8, panelRect.y + panelRect.h - 8)
   };
 }
 
@@ -2882,9 +2953,10 @@ function makePlanBalloon(row, panelCount, siblings = []) {
     balloon.x = position.x;
     balloon.y = position.y;
     if (balloon.hasTail) {
-      const target = figureTargetInPanel(panelRect);
-      balloon.tailX = target.x;
-      balloon.tailY = target.y;
+      const aim = tailAimForBalloon(balloon, panelRect);
+      const tail = shortenedTail(balloon, aim, panelRect);
+      balloon.tailX = tail.x;
+      balloon.tailY = tail.y;
     }
   }
   return balloon;
